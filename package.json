@@ -1,0 +1,10 @@
+{
+  "name": "deepseek-tg-bot",
+  "version": "1.0.0",
+  "main": "bot.js",
+  "type": "module",
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "telegraf": "^4.12.2"
+  }
+}
