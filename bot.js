@@ -72,7 +72,17 @@ bot.on("text", async (ctx) => {
     });
 
     const data = await response.json();
-    const reply = data?.choices?.[0]?.message?.content || "Ошибка: нет ответа от модели.";
+    console.log("Ответ от DeepSeek:", JSON.stringify(data, null, 2));
+
+    let reply;
+    if (data?.choices?.[0]?.message?.content) {
+      reply = data.choices[0].message.content;
+    } else if (data?.choices?.[0]?.text) {
+      reply = data.choices[0].text;
+    } else {
+      reply = "Ошибка: нет ответа от модели.";
+    }
+
     ctx.reply(reply);
 
   } catch (error) {
