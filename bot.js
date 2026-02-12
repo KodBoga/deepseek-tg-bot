@@ -41,7 +41,9 @@ bot.on("text", async (ctx) => {
       context: [],
       greeted: false,
       waitingForPhone: false,
-      waitingForName: false
+      waitingForName: false,
+      date: null,
+      time: null
     };
   }
 
@@ -59,7 +61,7 @@ bot.on("text", async (ctx) => {
     state.waitingForPhone = false;
     state.waitingForName = true;
 
-    return ctx.reply("Спасибо! Напишите, пожалуйста, ваше имя.");
+    return ctx.reply("Спасибо! Напишите, пожалуйста, ваше имя полностью (ФИО).");
   }
 
   // Если ждём имя
@@ -73,6 +75,8 @@ bot.on("text", async (ctx) => {
 Новая заявка из бота:
 Имя: ${state.name}
 Телефон: ${state.phone}
+Дата: ${state.date ?? "не указана"}
+Время: ${state.time ?? "не указано"}
 Комментарий: ${state.context.join(" ")}
     `.trim();
 
@@ -87,74 +91,19 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
   }
 
-  // Запоминаем контекст
-  state.context.push(raw);
+  // Попытка распознать дату и время
+  const dateRegex = /\b(сегодня|завтра|\d{1,2}\.\d{1,2}|\d{1,2}\s+[а-я]+)\b/i;
+  const timeRegex = /\b(\d{1,2}[:.]?\d{0,2}\s*(утра|вечера|дня)?|\bутром\b|\bднём\b|\bвечером\b)\b/i;
 
-  try {
-    const response = await fetch("https://api.deepseek.com/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [
-          {
-            role: "system",
-            content: `
-Ты — живой, дружелюбный администратор стоматологии «МедГарант».
-Ты ведёшь диалог естественно, коротко и по делу, как реальный человек.
+  const foundDate = raw.match(dateRegex);
+  const foundTime = raw.match(timeRegex);
 
-Главная цель — довести человека до записи:
-- если человек жалуется на боль — сочувствуй и предложи записаться;
-- если интересуется услугами — уточняй, что именно;
-- если готов записаться — спрашивай удобный день и время;
-- после выбора времени — проси номер телефона;
-- после телефона — проси имя;
-- после имени — сообщай, что заявка передана администратору.
-
-Правила общения:
-1. Приветствуй пользователя только один раз за весь диалог. Если приветствие уже было — больше не используй «Здравствуйте», «Добрый день» и т.п.
-2. Не повторяй одинаковые фразы.
-3. Учитывай контекст: не задавай вопросы, на которые человек уже ответил.
-4. Не давай медицинских рекомендаций.
-5. Пиши простым, человеческим языком.
-6. В конце большинства сообщений предлагай следующий шаг.
-
-Пример:
-Пользователь: «болит зуб»
-Ты: «Понимаю, это неприятно. Давайте подберём время для приёма — сегодня, завтра или в другой день?»
-          `.trim()
-          },
-          {
-            role: "user",
-            content: userMessage
-          }
-        ]
-      })
-    });
-
-    const data = await response.json();
-    const reply =
-      data?.choices?.[0]?.message?.content ??
-      "Извините, сейчас не могу ответить.";
-
-    // Если бот решил, что пора собирать телефон
-    if (reply.toLowerCase().includes("номер телефона")) {
-      state.waitingForPhone = true;
-    }
-
-    // Помечаем, что приветствие уже было
-    if (!state.greeted && reply.toLowerCase().includes("здрав")) {
-      state.greeted = true;
-    }
-
-    await ctx.reply(reply);
-  } catch (err) {
-    console.error("Ошибка:", err);
-    await ctx.reply("Произошла ошибка. Попробуйте ещё раз.");
+  if (foundDate && !state.date) {
+    state.date = foundDate[0];
   }
-});
 
-bot.launch();
+  if (foundTime && !state.time) {
+    state.time = foundTime[0];
+  }
+
+  //
