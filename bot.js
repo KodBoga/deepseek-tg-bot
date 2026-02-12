@@ -16,7 +16,7 @@ bot.on("text", async (ctx) => {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        model: "deepseek-v3",
+        model: "deepseek-chat",
         messages: [
           {
             role: "system",
@@ -92,5 +92,6 @@ bot.on("text", async (ctx) => {
 });
 
 bot.launch();  
+
 
 
