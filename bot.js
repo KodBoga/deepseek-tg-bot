@@ -1,103 +1,157 @@
-import { Telegraf } from "telegraf";
+import { Telegraf, Markup } from "telegraf";
+import fetch from "node-fetch";
 
-// Используем переменную, которая реально есть в Railway
+// === CONFIG ===
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
-
-// Несколько администраторов через запятую
 const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
   .split(",")
   .map(id => id.trim())
   .filter(Boolean);
 
-// Преобразование коротких ответов
-function normalizeUserMessage(text) {
-  const t = text.trim().toLowerCase();
+// === LOGGING ===
+bot.use((ctx, next) => {
+  console.log(`[${new Date().toISOString()}] From ${ctx.chat?.id}: ${ctx.message?.text}`);
+  return next();
+});
 
-  if (t === "1") return "Я хочу записаться на приём.";
-  if (t === "2") return "Я хочу узнать подробнее об услугах клиники.";
-  if (t === "3") return "Я хочу узнать график работы клиники.";
-  if (t === "4") return "У меня другой вопрос.";
+bot.catch((err, ctx) => {
+  console.error(`Bot error for ${ctx.chat.id}:`, err);
+});
 
-  if (["да", "ага", "угу", "конечно"].includes(t)) {
-    return "Да, меня это интересует.";
-  }
-  if (["нет", "не", "неа"].includes(t)) {
-    return "Нет, это меня не интересует.";
-  }
-
-  return text;
-}
-
-// Состояние диалога
+// === STATE ===
 const userState = {};
 
+// === DEEPSEEK ===
+async function askDeepSeek(prompt) {
+  try {
+    const response = await fetch("https://api.deepseek.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [{ role: "user", content: prompt }]
+      })
+    });
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "Не удалось получить ответ от ассистента.";
+  } catch (e) {
+    console.error("DeepSeek error:", e);
+    return "Произошла ошибка при обращении к ассистенту.";
+  }
+}
+
+// === CRM (заглушка) ===
+async function sendToCRM(lead) {
+  console.log("CRM LEAD:", lead);
+  // Здесь можно подключить amoCRM / Bitrix / Unitee / Мегаплан
+  return true;
+}
+
+// === KEYWORDS ===
+const keywords = {
+  "кариес": "Кариес — это разрушение зуба. Лучше пройти диагностику. Хотите записаться?",
+  "имплант": "Имплантация — надёжный способ восстановления зуба. Могу записать вас на консультацию.",
+  "чистка": "Профессиональная чистка стоит 3500 руб. Хотите записаться?",
+  "камни": "Зубные камни лучше удалять раз в 6 месяцев. Могу записать вас на чистку."
+};
+
+// === SCHEDULE ===
+const scheduleText = `
+График работы клиники:
+Пн–Пт: 10:00–20:00
+Сб: 11:00–18:00
+Вс: выходной
+`;
+
+// === /START ===
+bot.start((ctx) => {
+  const chatId = ctx.chat.id;
+
+  userState[chatId] = {
+    context: [],
+    greeted: true,
+    waitingForPhone: false,
+    waitingForName: false,
+    date: null,
+    time: null,
+    clarifyUsed: false,
+    invited: false,
+    phone: null,
+    name: null
+  };
+
+  ctx.reply(
+    "Здравствуйте! Вас приветствует стоматология «МедГарант». Что вас беспокоит?",
+    Markup.keyboard([
+      ["Болит зуб", "Проверка"],
+      ["Хочу консультацию", "График работы"]
+    ]).resize()
+  );
+});
+
+// === MAIN HANDLER ===
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
-  const userMessage = normalizeUserMessage(raw);
+  const state = userState[chatId] || {};
 
-  // Инициализация состояния
-  if (!userState[chatId]) {
-    userState[chatId] = {
-      context: [],
-      greeted: false,
-      waitingForPhone: false,
-      waitingForName: false,
-      date: null,
-      time: null,
-      clarifyUsed: false,
-      invited: false,
-      phone: null,
-      name: null
-    };
+  // === KEYWORD AUTOREPLY ===
+  for (const key in keywords) {
+    if (raw.toLowerCase().includes(key)) {
+      return ctx.reply(keywords[key]);
+    }
   }
 
-  const state = userState[chatId];
-
-  // Если пользователь сам написал приветствие
-  const greetings = ["здравствуйте", "привет", "добрый день", "добрый вечер", "доброе утро"];
-  if (greetings.includes(raw.toLowerCase())) {
-    state.greeted = true;
+  // === BUTTONS ===
+  if (raw === "График работы") {
+    return ctx.reply(scheduleText);
   }
 
-  // Первое приветствие — только один раз
-  if (!state.greeted) {
-    state.greeted = true;
-    return ctx.reply("Здравствуйте! Вас приветствует стоматология «МедГарант». Подскажите, пожалуйста, что вас беспокоит.");
+  if (raw === "Проверка") {
+    return ctx.reply("Что именно хотите проверить?");
   }
 
-  // Если ждём телефон
+  // === WAITING FOR PHONE ===
   if (state.waitingForPhone) {
-    const phone = raw;
-
-    if (!phone.match(/^\+?\d[\d\s\-]{5,}$/)) {
+    if (!raw.match(/^\+?\d[\d\s\-]{5,}$/)) {
       return ctx.reply("Похоже, номер в необычном формате. Напишите, пожалуйста, номер телефона ещё раз.");
     }
 
-    state.phone = phone;
+    state.phone = raw;
     state.waitingForPhone = false;
     state.waitingForName = true;
 
     return ctx.reply("Спасибо! Напишите, пожалуйста, ваше имя полностью (ФИО).");
   }
 
-  // Если ждём имя
+  // === WAITING FOR NAME ===
   if (state.waitingForName) {
-    const name = raw;
-    state.name = name;
+    state.name = raw;
     state.waitingForName = false;
 
-    const leadText = `
-Новая заявка из бота:
-Имя: ${state.name}
-Телефон: ${state.phone}
-Дата: ${state.date ?? "не указана"}
-Время: ${state.time ?? "не указано"}
-Комментарий: ${state.context.join(" ")}
-    `.trim();
+    const lead = {
+      name: state.name,
+      phone: state.phone,
+      date: state.date ?? "не указана",
+      time: state.time ?? "не указано",
+      comment: state.context.join(" ")
+    };
+
+    await sendToCRM(lead);
 
     for (const adminId of ADMIN_CHAT_IDS) {
-      await ctx.telegram.sendMessage(adminId, leadText);
+      await ctx.telegram.sendMessage(adminId, `
+Новая заявка:
+Имя: ${lead.name}
+Телефон: ${lead.phone}
+Дата: ${lead.date}
+Время: ${lead.time}
+Комментарий: ${lead.comment}
+      `.trim());
     }
 
     userState[chatId] = null;
@@ -105,48 +159,44 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
   }
 
-  // Попытка распознать дату и время
-  const dateRegex = /\b(сегодня|завтра|\d{1,2}\.\d{1,2}|\d{1,2}\s+[а-я]+)\b/i;
-  const timeRegex = /\b(\d{1,2}[:.]?\d{0,2}\s*(утра|вечера|дня)?|\bутром\b|\bднём\b|\bвечером\b)\b/i;
+  // === DATE/TIME DETECTION ===
+  const dateRegex = /\b(сегодня|завтра|\d{1,2}\.\d{1,2})\b/i;
+  const timeRegex = /\b(\d{1,2}[:.]?\d{0,2})\b/i;
 
   const foundDate = raw.match(dateRegex);
   const foundTime = raw.match(timeRegex);
 
-  if (foundDate && !state.date) {
-    state.date = foundDate[0];
-  }
-
-  if (foundTime && !state.time) {
-    state.time = foundTime[0];
-  }
+  if (foundDate) state.date = foundDate[0];
+  if (foundTime) state.time = foundTime[0];
 
   state.context.push(raw);
 
-  // 1) Уточняющий вопрос
+  // === CLARIFY ===
   if (!state.clarifyUsed) {
     state.clarifyUsed = true;
-    return ctx.reply("Понимаю. А боль постоянная или появляется при накусывании.");
+    return ctx.reply("Понимаю. А боль постоянная или появляется при накусывании?");
   }
 
-  // 2) Приглашение на приём
-  if (state.clarifyUsed && !state.invited) {
+  // === INVITE ===
+  if (!state.invited) {
     state.invited = true;
     return ctx.reply(
       "Понимаю ситуацию. Чтобы врач точно оценил, что происходит, лучше прийти на первичный приём.\n\n" +
       "Сейчас действует акция: полный стоматологический check‑up — 3500 руб. вместо 4900 руб.\n" +
       "В стоимость входит консультация любого врача‑стоматолога и компьютерная 3D‑диагностика (КЛКТ).\n\n" +
-      "Подскажите, когда вам удобнее — сегодня, завтра или в другой день?"
+      "Когда вам удобнее — сегодня, завтра или в другой день?"
     );
   }
 
-  // 3) Просим телефон
-  if (state.invited && !state.phone && !state.waitingForPhone && !state.waitingForName) {
+  // === REQUEST PHONE ===
+  if (!state.phone) {
     state.waitingForPhone = true;
     return ctx.reply("Чтобы записать вас на приём, напишите, пожалуйста, номер телефона для связи.");
   }
 
-  // 4) Фолбэк
-  return ctx.reply("Понимаю вас. Давайте я помогу с записью: напишите, пожалуйста, номер телефона для связи.");
+  // === FALLBACK ===
+  const aiReply = await askDeepSeek(`Ответь как стоматолог: ${raw}`);
+  return ctx.reply(aiReply);
 });
 
 bot.launch();
