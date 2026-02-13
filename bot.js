@@ -1,13 +1,15 @@
 import { Telegraf } from "telegraf";
 
-const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
+// Используем BOT_TOKEN — так называется переменная в Railway
+const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Несколько администраторов через запятую
-const ADMIN_CHAT_IDS = process.env.ADMIN_CHAT_IDS
+const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
   .split(",")
-  .map(id => id.trim());
+  .map(id => id.trim())
+  .filter(Boolean);
 
-// Преобразование коротких ответов (если вдруг пригодится)
+// Преобразование коротких ответов
 function normalizeUserMessage(text) {
   const t = text.trim().toLowerCase();
 
@@ -52,7 +54,7 @@ bot.on("text", async (ctx) => {
 
   const state = userState[chatId];
 
-  // Если пользователь сам написал приветствие — считаем, что приветствие уже было
+  // Если пользователь сам написал приветствие
   const greetings = ["здравствуйте", "привет", "добрый день", "добрый вечер", "доброе утро"];
   if (greetings.includes(raw.toLowerCase())) {
     state.greeted = true;
@@ -103,7 +105,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
   }
 
-  // Попытка распознать дату и время (если человек сам пишет)
+  // Попытка распознать дату и время
   const dateRegex = /\b(сегодня|завтра|\d{1,2}\.\d{1,2}|\d{1,2}\s+[а-я]+)\b/i;
   const timeRegex = /\b(\d{1,2}[:.]?\d{0,2}\s*(утра|вечера|дня)?|\bутром\b|\bднём\b|\bвечером\b)\b/i;
 
@@ -120,15 +122,13 @@ bot.on("text", async (ctx) => {
 
   state.context.push(raw);
 
-  // Логика диалога БЕЗ модели
-
-  // 1) Если ещё не задавали уточняющий вопрос — задаём один фиксированный
+  // 1) Уточняющий вопрос
   if (!state.clarifyUsed) {
     state.clarifyUsed = true;
     return ctx.reply("Понимаю. А боль постоянная или появляется при накусывании.");
   }
 
-  // 2) Если уточнение уже было, но ещё не приглашали — приглашаем на приём (вариант А)
+  // 2) Приглашение на приём
   if (state.clarifyUsed && !state.invited) {
     state.invited = true;
     return ctx.reply(
@@ -139,13 +139,13 @@ bot.on("text", async (ctx) => {
     );
   }
 
-  // 3) После приглашения — просим номер телефона, если его ещё нет
+  // 3) Просим телефон
   if (state.invited && !state.phone && !state.waitingForPhone && !state.waitingForName) {
     state.waitingForPhone = true;
     return ctx.reply("Чтобы записать вас на приём, напишите, пожалуйста, номер телефона для связи.");
   }
 
-  // 4) На всякий случай — если что-то пошло не по сценарию
+  // 4) Фолбэк
   return ctx.reply("Понимаю вас. Давайте я помогу с записью: напишите, пожалуйста, номер телефона для связи.");
 });
 
