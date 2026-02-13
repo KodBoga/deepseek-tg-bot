@@ -55,6 +55,12 @@ bot.on("text", async (ctx) => {
     state.greeted = true;
   }
 
+  // Первое приветствие — только один раз
+  if (!state.greeted) {
+    state.greeted = true;
+    return ctx.reply("Здравствуйте! Вас приветствует стоматология «МедГарант». Подскажите, пожалуйста, что вас беспокоит?");
+  }
+
   // Если ждём телефон
   if (state.waitingForPhone) {
     const phone = raw;
@@ -181,19 +187,12 @@ bot.on("text", async (ctx) => {
       "Извините, сейчас не могу ответить.";
 
     // Фильтр повторных приветствий
-    if (state.greeted) {
-      reply = reply
-        .replace(/^здравствуйте[!. ]*/i, "")
-        .replace(/^добрый день[!. ]*/i, "")
-        .replace(/^добрый вечер[!. ]*/i, "")
-        .replace(/^доброе утро[!. ]*/i, "")
-        .trim();
-    }
-
-    // Если DeepSeek всё же вставил приветствие — помечаем
-    if (!state.greeted && reply.toLowerCase().includes("здрав")) {
-      state.greeted = true;
-    }
+    reply = reply
+      .replace(/^здравствуйте[!. ]*/i, "")
+      .replace(/^добрый день[!. ]*/i, "")
+      .replace(/^добрый вечер[!. ]*/i, "")
+      .replace(/^доброе утро[!. ]*/i, "")
+      .trim();
 
     // Если пора собирать телефон
     if (
