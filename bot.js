@@ -1,7 +1,7 @@
 import { Telegraf } from "telegraf";
 
-// Используем BOT_TOKEN — так называется переменная в Railway
-const bot = new Telegraf(process.env.BOT_TOKEN);
+// Используем переменную, которая реально есть в Railway
+const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 
 // Несколько администраторов через запятую
 const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
