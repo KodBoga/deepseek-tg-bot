@@ -10,7 +10,9 @@ const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
 
 // === LOGGING ===
 bot.use((ctx, next) => {
-  console.log(`[${new Date().toISOString()}] From ${ctx.chat?.id}: ${ctx.message?.text}`);
+  console.log(
+    `[${new Date().toISOString()}] From ${ctx.chat?.id}: ${ctx.message?.text}`
+  );
   return next();
 });
 
@@ -47,16 +49,17 @@ async function askDeepSeek(prompt) {
 // === CRM (заглушка) ===
 async function sendToCRM(lead) {
   console.log("CRM LEAD:", lead);
-  // Здесь можно подключить amoCRM / Bitrix / Unitee / Мегаплан
+  // сюда потом можно воткнуть amo/Bitrix/Unitee
   return true;
 }
 
-// === KEYWORDS ===
+// === KEYWORDS (быстрые автоответы) ===
 const keywords = {
-  "кариес": "Кариес — это разрушение зуба. Лучше пройти диагностику. Хотите записаться?",
+  "кариес": "Кариес — это разрушение зуба. Лучше пройти диагностику. Могу записать вас на приём.",
   "имплант": "Имплантация — надёжный способ восстановления зуба. Могу записать вас на консультацию.",
   "чистка": "Профессиональная чистка стоит 3500 руб. Хотите записаться?",
-  "камни": "Зубные камни лучше удалять раз в 6 месяцев. Могу записать вас на чистку."
+  "камн": "Зубные камни лучше удалять раз в 6 месяцев. Могу записать вас на чистку.",
+  "запах": "Неприятный запах изо рта часто связан с налётом или проблемами дёсен. Лучше показаться врачу.",
 };
 
 // === SCHEDULE ===
@@ -66,6 +69,46 @@ const scheduleText = `
 Сб: 11:00–18:00
 Вс: выходной
 `;
+
+// === КОНТЕКСТНЫЕ УТОЧНЯЮЩИЕ ВОПРОСЫ ===
+const clarifyMap = [
+  {
+    keys: ["десна", "дёсна", "десны"],
+    question: "А что именно с десной? Кровоточит, опухла, болит, есть неприятный запах?"
+  },
+  {
+    keys: ["кровоточ", "кровь"],
+    question: "Кровоточит при чистке, при еде или сама по себе?"
+  },
+  {
+    keys: ["камн", "налет", "налёт"],
+    question: "Налёт и камни беспокоят больше визуально или есть неприятные ощущения, запах?"
+  },
+  {
+    keys: ["запах"],
+    question: "Запах появился недавно или давно? Усиливается утром или после еды?"
+  },
+  {
+    keys: ["скол"],
+    question: "Скол большой или небольшой? Есть ли боль при накусывании или на холодное?"
+  },
+  {
+    keys: ["чувств"],
+    question: "Чувствительность на холодное, горячее или сладкое?"
+  },
+  {
+    keys: ["пломб"],
+    question: "Пломба выпала полностью или частично? Есть ли боль?"
+  },
+  {
+    keys: ["коронк", "коронка"],
+    question: "С коронкой что произошло — слетела, треснула или болит под ней?"
+  },
+  {
+    keys: ["имплант"],
+    question: "Имплант беспокоит? Боль, подвижность или дискомфорт в области импланта?"
+  }
+];
 
 // === /START ===
 bot.start((ctx) => {
@@ -85,9 +128,9 @@ bot.start((ctx) => {
   };
 
   ctx.reply(
-    "Здравствуйте! Вас приветствует стоматология «МедГарант». Что вас беспокоит?",
+    "Здравствуйте! Вас приветствует стоматология «МедГарант». Подскажите, пожалуйста, что вас беспокоит.",
     Markup.keyboard([
-      ["Болит зуб", "Проверка"],
+      ["Болит зуб", "Десна"],
       ["Хочу консультацию", "График работы"]
     ]).resize()
   );
@@ -97,25 +140,58 @@ bot.start((ctx) => {
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
-  const state = userState[chatId] || {};
+  const text = raw.toLowerCase();
+  const state = (userState[chatId] ||= {
+    context: [],
+    greeted: false,
+    waitingForPhone: false,
+    waitingForName: false,
+    date: null,
+    time: null,
+    clarifyUsed: false,
+    invited: false,
+    phone: null,
+    name: null
+  });
 
-  // === KEYWORD AUTOREPLY ===
-  for (const key in keywords) {
-    if (raw.toLowerCase().includes(key)) {
-      return ctx.reply(keywords[key]);
-    }
-  }
-
-  // === BUTTONS ===
+  // Кнопка "График работы"
   if (raw === "График работы") {
     return ctx.reply(scheduleText);
   }
 
-  if (raw === "Проверка") {
-    return ctx.reply("Что именно хотите проверить?");
+  // Кнопка "Десна"
+  if (raw === "Десна") {
+    state.context.push("десна");
+    return ctx.reply("А что именно с десной? Кровоточит, опухла, болит, есть неприятный запах?");
   }
 
-  // === WAITING FOR PHONE ===
+  // Кнопка "Болит зуб"
+  if (raw === "Болит зуб") {
+    state.context.push("болит зуб");
+    return ctx.reply("Боль постоянная, при накусывании или на холодное/горячее?");
+  }
+
+  // Кнопка "Хочу консультацию"
+  if (raw === "Хочу консультацию") {
+    state.invited = true;
+    return ctx.reply(
+      "Могу записать вас на консультацию к врачу.\n\n" +
+      "Сейчас действует акция: полный стоматологический check‑up — 3500 руб. вместо 4900 руб.\n" +
+      "В стоимость входит консультация любого врача‑стоматолога и компьютерная 3D‑диагностика (КЛКТ).\n\n" +
+      "Когда вам удобнее — сегодня, завтра или в другой день?"
+    );
+  }
+
+  // Автоответы по ключевым словам
+  for (const key in keywords) {
+    if (text.includes(key)) {
+      await ctx.reply(keywords[key]);
+      // не выходим — дальше всё равно пойдём по сценарию записи
+      break;
+    }
+  }
+
+  // Ожидание телефона
   if (state.waitingForPhone) {
     if (!raw.match(/^\+?\d[\d\s\-]{5,}$/)) {
       return ctx.reply("Похоже, номер в необычном формате. Напишите, пожалуйста, номер телефона ещё раз.");
@@ -128,7 +204,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Спасибо! Напишите, пожалуйста, ваше имя полностью (ФИО).");
   }
 
-  // === WAITING FOR NAME ===
+  // Ожидание имени
   if (state.waitingForName) {
     state.name = raw;
     state.waitingForName = false;
@@ -144,14 +220,17 @@ bot.on("text", async (ctx) => {
     await sendToCRM(lead);
 
     for (const adminId of ADMIN_CHAT_IDS) {
-      await ctx.telegram.sendMessage(adminId, `
-Новая заявка:
+      await ctx.telegram.sendMessage(
+        adminId,
+        `
+Новая заявка из бота:
 Имя: ${lead.name}
 Телефон: ${lead.phone}
 Дата: ${lead.date}
 Время: ${lead.time}
 Комментарий: ${lead.comment}
-      `.trim());
+        `.trim()
+      );
     }
 
     userState[chatId] = null;
@@ -159,7 +238,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
   }
 
-  // === DATE/TIME DETECTION ===
+  // Пытаемся вытащить дату/время из текста
   const dateRegex = /\b(сегодня|завтра|\d{1,2}\.\d{1,2})\b/i;
   const timeRegex = /\b(\d{1,2}[:.]?\d{0,2})\b/i;
 
@@ -171,13 +250,20 @@ bot.on("text", async (ctx) => {
 
   state.context.push(raw);
 
-  // === CLARIFY ===
+  // Контекстный уточняющий вопрос (один раз)
   if (!state.clarifyUsed) {
+    for (const item of clarifyMap) {
+      if (item.keys.some(k => text.includes(k))) {
+        state.clarifyUsed = true;
+        return ctx.reply(item.question);
+      }
+    }
+
     state.clarifyUsed = true;
-    return ctx.reply("Понимаю. А боль постоянная или появляется при накусывании?");
+    return ctx.reply("Понимаю. Расскажите, пожалуйста, чуть подробнее, что именно вас беспокоит.");
   }
 
-  // === INVITE ===
+  // Приглашение на приём + акция (один раз)
   if (!state.invited) {
     state.invited = true;
     return ctx.reply(
@@ -188,14 +274,14 @@ bot.on("text", async (ctx) => {
     );
   }
 
-  // === REQUEST PHONE ===
+  // Если ещё нет телефона — просим телефон
   if (!state.phone) {
     state.waitingForPhone = true;
     return ctx.reply("Чтобы записать вас на приём, напишите, пожалуйста, номер телефона для связи.");
   }
 
-  // === FALLBACK ===
-  const aiReply = await askDeepSeek(`Ответь как стоматолог: ${raw}`);
+  // Фоллбек — DeepSeek как умный ассистент
+  const aiReply = await askDeepSeek(`Ответь как стоматолог, кратко и по делу: ${raw}`);
   return ctx.reply(aiReply);
 });
 
