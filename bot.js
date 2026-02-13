@@ -1,4 +1,4 @@
-import { Telegraf, Markup } from "telegraf";
+import { Telegraf } from "telegraf";
 
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
@@ -8,41 +8,10 @@ const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
 
 const userState = {};
 
-bot.start((ctx) => {
-  const chatId = ctx.chat.id;
-
-  userState[chatId] = {
-    context: [],
-    waitingForPhone: false,
-    waitingForName: false,
-    clarifyUsed: false,
-    invited: false,
-    phone: null,
-    name: null,
-    date: null,
-    time: null
-  };
-
-  ctx.reply(
-    "Здравствуйте! Вас приветствует стоматология «МедГарант». Подскажите, пожалуйста, что вас беспокоит.",
-    Markup.keyboard([
-      ["Болит зуб", "Десна"],
-      ["Хочу консультацию", "График работы"]
-    ]).resize()
-  );
-});
-
-const scheduleText = `
-График работы клиники:
-Пн–Пт: 10:00–20:00
-Сб: 11:00–18:00
-Вс: выходной
-`;
-
 const clarifyMap = [
   {
     keys: ["десна", "дёсна", "десны", "опухла"],
-    question: "А что именно с десной? Кровоточит, сильно опухла, болит, есть неприятный запах?"
+    question: "А что именно с десной? Кровоточит, опухла, болит, есть неприятный запах?"
   },
   {
     keys: ["кровоточ", "кровь"],
@@ -62,6 +31,24 @@ const clarifyMap = [
   }
 ];
 
+bot.start((ctx) => {
+  const chatId = ctx.chat.id;
+
+  userState[chatId] = {
+    context: [],
+    waitingForPhone: false,
+    waitingForName: false,
+    clarifyUsed: false,
+    invited: false,
+    phone: null,
+    name: null,
+    date: null,
+    time: null
+  };
+
+  ctx.reply("Здравствуйте! Вас приветствует стоматология «МедГарант». Подскажите, пожалуйста, что вас беспокоит.");
+});
+
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
@@ -77,31 +64,6 @@ bot.on("text", async (ctx) => {
     date: null,
     time: null
   });
-
-  // Кнопки
-  if (raw === "График работы") {
-    return ctx.reply(scheduleText);
-  }
-
-  if (raw === "Десна") {
-    state.context.push("десна");
-    return ctx.reply("А что именно с десной? Кровоточит, опухла, болит, есть неприятный запах?");
-  }
-
-  if (raw === "Болит зуб") {
-    state.context.push("болит зуб");
-    return ctx.reply("Боль постоянная, при накусывании или на холодное/горячее?");
-  }
-
-  if (raw === "Хочу консультацию") {
-    state.invited = true;
-    return ctx.reply(
-      "Могу записать вас на консультацию к врачу.\n\n" +
-      "Сейчас действует акция: полный стоматологический check‑up — 3500 руб. вместо 4900 руб.\n" +
-      "В стоимость входит консультация любого врача‑стоматолога и компьютерная 3D‑диагностика (КЛКТ).\n\n" +
-      "Когда вам удобнее — сегодня, завтра или в другой день?"
-    );
-  }
 
   // Ожидание телефона
   if (state.waitingForPhone) {
