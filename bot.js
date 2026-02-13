@@ -1,28 +1,127 @@
 import { Telegraf } from "telegraf";
-import axios from "axios";
+import fetch from "node-fetch";
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
+const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 
-// Хранилище состояний пользователей
-const userState = {};
+// Несколько администраторов через запятую
+const ADMIN_CHAT_IDS = process.env.ADMIN_CHAT_IDS
+  .split(",")
+  .map(id => id.trim());
 
-function getState(id) {
-  if (!userState[id]) {
-    userState[id] = {
-      greeted: false,
-      stage: "start",
-      problem: null,
-      date: null,
-      time: null,
-      phone: null,
-      name: null,
-    };
+// Преобразование коротких ответов
+function normalizeUserMessage(text) {
+  const t = text.trim().toLowerCase();
+
+  if (t === "1") return "Я хочу записаться на приём.";
+  if (t === "2") return "Я хочу узнать подробнее об услугах клиники.";
+  if (t === "3") return "Я хочу узнать график работы клиники.";
+  if (t === "4") return "У меня другой вопрос.";
+
+  if (["да", "ага", "угу", "конечно"].includes(t)) {
+    return "Да, меня это интересует.";
   }
-  return userState[id];
+  if (["нет", "не", "неа"].includes(t)) {
+    return "Нет, это меня не интересует.";
+  }
+
+  return text;
 }
 
-// SYSTEM PROMPT
-const SYSTEM_PROMPT = `
+// Состояние диалога
+const userState = {};
+
+bot.on("text", async (ctx) => {
+  const chatId = ctx.chat.id;
+  const raw = ctx.message.text;
+  const userMessage = normalizeUserMessage(raw);
+
+  // Инициализация состояния
+  if (!userState[chatId]) {
+    userState[chatId] = {
+      context: [],
+      greeted: false,
+      waitingForPhone: false,
+      waitingForName: false,
+      date: null,
+      time: null
+    };
+  }
+
+  const state = userState[chatId];
+
+  // Если ждём телефон
+  if (state.waitingForPhone) {
+    const phone = raw.trim();
+
+    if (!phone.match(/^\+?\d[\d\s\-]{5,}$/)) {
+      return ctx.reply("Похоже, номер в необычном формате. Напишите, пожалуйста, номер телефона ещё раз.");
+    }
+
+    state.phone = phone;
+    state.waitingForPhone = false;
+    state.waitingForName = true;
+
+    return ctx.reply("Спасибо! Напишите, пожалуйста, ваше имя полностью (ФИО).");
+  }
+
+  // Если ждём имя
+  if (state.waitingForName) {
+    const name = raw.trim();
+    state.name = name;
+    state.waitingForName = false;
+
+    // Формируем заявку
+    const leadText = `
+Новая заявка из бота:
+Имя: ${state.name}
+Телефон: ${state.phone}
+Дата: ${state.date ?? "не указана"}
+Время: ${state.time ?? "не указано"}
+Комментарий: ${state.context.join(" ")}
+    `.trim();
+
+    // Отправляем всем администраторам
+    for (const adminId of ADMIN_CHAT_IDS) {
+      await ctx.telegram.sendMessage(adminId, leadText);
+    }
+
+    // Очищаем состояние
+    userState[chatId] = null;
+
+    return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
+  }
+
+  // Попытка распознать дату и время
+  const dateRegex = /\b(сегодня|завтра|\d{1,2}\.\d{1,2}|\d{1,2}\s+[а-я]+)\b/i;
+  const timeRegex = /\b(\d{1,2}[:.]?\d{0,2}\s*(утра|вечера|дня)?|\bутром\b|\bднём\b|\bвечером\b)\b/i;
+
+  const foundDate = raw.match(dateRegex);
+  const foundTime = raw.match(timeRegex);
+
+  if (foundDate && !state.date) {
+    state.date = foundDate[0];
+  }
+
+  if (foundTime && !state.time) {
+    state.time = foundTime[0];
+  }
+
+  // Запоминаем контекст
+  state.context.push(raw);
+
+  try {
+    const response = await fetch("https://api.deepseek.com/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [
+          {
+            role: "system",
+            content: `
 Ты — вежливый и профессиональный администратор стоматологии «МедГарант».
 Твоя задача — вести диалог с клиентом, помогать ему и собирать данные для записи.
 
@@ -55,12 +154,6 @@ const SYSTEM_PROMPT = `
 7. Запрос имени.
 8. Завершение: «Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.»
 
-ОТВЕТЫ НА СЛОЖНЫЕ СИТУАЦИИ:
-— Если клиент пишет одно слово («да», «нет», «узнать», «кариес») — задавай уточняющий вопрос.
-— Если клиент сбивается — мягко возвращай к текущему этапу.
-— Если клиент пишет «прочти» или «мы уже говорили» — не сбрасывай контекст, продолжай с последнего этапа.
-— Если клиент пишет что‑то не по теме — мягко возвращай к цели: запись на приём.
-
 ТЫ НИКОГДА НЕ ДОЛЖЕН:
 — придумывать дату или время;
 — менять дату, которую сказал клиент;
@@ -69,91 +162,47 @@ const SYSTEM_PROMPT = `
 — повторять приветствие;
 — быть фамильярным;
 — отвечать грубо или сухо.
-`;
+            `.trim()
+          },
+          {
+            role: "user",
+            content: userMessage
+          },
+          {
+            role: "assistant",
+            content: `
+Текущие данные пользователя:
+Дата: ${state.date ?? "не указана"}
+Время: ${state.time ?? "не указано"}
+            `.trim()
+          }
+        ]
+      })
+    });
 
-async function askLLM(prompt) {
-  const response = await axios.post(
-    "https://api.deepseek.com/chat/completions",
-    {
-      model: "deepseek-chat",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.3,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-        "Content-Type": "application/json",
-      },
+    const data = await response.json();
+    const reply =
+      data?.choices?.[0]?.message?.content ??
+      "Извините, сейчас не могу ответить.";
+
+    // Если бот решил, что пора собирать телефон
+    if (
+      reply.toLowerCase().includes("номер телефона") ||
+      (state.date && state.time && !state.phone)
+    ) {
+      state.waitingForPhone = true;
     }
-  );
 
-  return response.data.choices[0].message.content;
-}
-
-bot.on("text", async (ctx) => {
-  const id = ctx.from.id;
-  const text = ctx.message.text.trim();
-  const state = getState(id);
-
-  // Приветствие только один раз
-  if (!state.greeted) {
-    state.greeted = true;
-    state.stage = "problem";
-    return ctx.reply("Здравствуйте! Чем могу помочь?");
-  }
-
-  // Логика этапов
-  if (state.stage === "problem") {
-    state.problem = text;
-    state.stage = "date";
-    return ctx.reply("Когда ориентировочно вам удобно — сегодня, завтра или в другой день?");
-  }
-
-  if (state.stage === "date") {
-    state.date = text;
-    state.stage = "time";
-    return ctx.reply("В какое время ориентируетесь — утром, днём или вечером?");
-  }
-
-  if (state.stage === "time") {
-    state.time = text;
-    state.stage = "phone";
-    return ctx.reply("Хорошо, я зафиксировал. Администратор перезвонит и предложит точное время. Напишите, пожалуйста, ваш номер телефона.");
-  }
-
-  if (state.stage === "phone") {
-    if (!/^\d{10,15}$/.test(text)) {
-      return ctx.reply("Пожалуйста, укажите номер телефона в формате 79991234567.");
+    // Помечаем, что приветствие уже было
+    if (!state.greeted && reply.toLowerCase().includes("здрав")) {
+      state.greeted = true;
     }
-    state.phone = text;
-    state.stage = "name";
-    return ctx.reply("Спасибо! Напишите, пожалуйста, ваше имя.");
+
+    await ctx.reply(reply);
+  } catch (err) {
+    console.error("Ошибка:", err);
+    await ctx.reply("Произошла ошибка. Попробуйте ещё раз.");
   }
-
-  if (state.stage === "name") {
-    state.name = text;
-    state.stage = "done";
-
-    // Отправка заявки админу
-    const adminMessage = `
-Новая заявка из бота:
-Имя: ${state.name}
-Телефон: ${state.phone}
-Комментарий: ${state.problem}
-Дата: ${state.date}
-Время: ${state.time}
-    `;
-
-    await ctx.telegram.sendMessage(process.env.ADMIN_CHAT_ID, adminMessage);
-
-    return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
-  }
-
-  // Если диалог завершён, но человек пишет снова
-  return ctx.reply("Если хотите начать новую запись, просто напишите любое сообщение.");
 });
 
 bot.launch();
