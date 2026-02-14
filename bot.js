@@ -41,10 +41,20 @@ function branchesMenu() {
   ]).resize();
 }
 
+function resetState(state) {
+  state.waitingForPhone = false;
+  state.waitingForName = false;
+  state.invited = false;
+  state.context = [];
+  state.date = null;
+  state.time = null;
+}
+
 bot.start((ctx) => {
   const chatId = ctx.chat.id;
 
   userState[chatId] = {
+    section: null,
     context: [],
     waitingForPhone: false,
     waitingForName: false,
@@ -64,22 +74,37 @@ bot.start((ctx) => {
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
-  const text = raw.toLowerCase();
   const state = userState[chatId];
 
   // Назад
   if (raw === "Назад") {
+    resetState(state);
+    state.section = null;
     return ctx.reply("Возвращаюсь в главное меню.", mainMenu());
   }
 
-  // График работы → показать филиалы
+  // График работы — всегда перебивает любой сценарий
   if (raw === "График работы") {
+    resetState(state);
+    state.section = "branches";
     return ctx.reply("Выберите филиал:", branchesMenu());
   }
 
-  // Если выбрали филиал
-  if (branches[raw]) {
+  // Выбор филиала
+  if (state.section === "branches" && branches[raw]) {
     return ctx.reply(branches[raw]);
+  }
+
+  // Выбор раздела
+  if (["Зуб", "Десна", "Брекеты", "Гигиена", "Хочу консультацию"].includes(raw)) {
+    resetState(state);
+    state.section = raw;
+
+    if (raw === "Зуб") return ctx.reply("Что именно беспокоит зуб? Боль, чувствительность, скол, кариес?");
+    if (raw === "Десна") return ctx.reply("Что именно с десной? Кровоточит, опухла, болит, запах?");
+    if (raw === "Брекеты") return ctx.reply("Интересует установка брекетов, консультация ортодонта или стоимость?");
+    if (raw === "Гигиена") return ctx.reply("Гигиена: интересует профчистка, AirFlow, удаление камней?");
+    if (raw === "Хочу консультацию") return ctx.reply("Хорошо, подскажите, по какому вопросу нужна консультация?");
   }
 
   // Ожидание телефона
@@ -127,16 +152,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
   }
 
-  // Пытаемся вытащить дату/время
-  const dateRegex = /\b(сегодня|завтра|\d{1,2}\.\d{1,2})\b/i;
-  const timeRegex = /\b(\d{1,2}[:.]?\d{0,2})\b/i;
-
-  const foundDate = raw.match(dateRegex);
-  const foundTime = raw.match(timeRegex);
-
-  if (foundDate) state.date = foundDate[0];
-  if (foundTime) state.time = foundTime[0];
-
+  // Сбор контекста
   state.context.push(raw);
 
   // Приглашение на приём
@@ -150,7 +166,7 @@ bot.on("text", async (ctx) => {
     );
   }
 
-  // Если ещё нет телефона — просим телефон
+  // Просим телефон
   if (!state.phone) {
     state.waitingForPhone = true;
     return ctx.reply("Чтобы записать вас на приём, напишите, пожалуйста, номер телефона для связи.");
@@ -160,5 +176,3 @@ bot.on("text", async (ctx) => {
 });
 
 bot.launch();
-
-
