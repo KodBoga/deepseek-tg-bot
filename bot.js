@@ -51,26 +51,22 @@ function createState() {
   return {
     section: null,
     context: [],
+    invited: false,
     waitingForPhone: false,
     waitingForName: false,
-    invited: false,
     phone: null,
-    name: null,
-    date: null,
-    time: null
+    name: null
   };
 }
 
 function resetState(state) {
   state.section = null;
   state.context = [];
+  state.invited = false;
   state.waitingForPhone = false;
   state.waitingForName = false;
-  state.invited = false;
   state.phone = null;
   state.name = null;
-  state.date = null;
-  state.time = null;
 }
 
 bot.start((ctx) => {
@@ -87,10 +83,7 @@ bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
 
-  if (!userState[chatId]) {
-    userState[chatId] = createState();
-  }
-
+  if (!userState[chatId]) userState[chatId] = createState();
   const state = userState[chatId];
 
   // Назад
@@ -185,8 +178,6 @@ bot.on("text", async (ctx) => {
     const lead = {
       name: state.name,
       phone: state.phone,
-      date: state.date ?? "не указана",
-      time: state.time ?? "не указано",
       comment: state.context.join(" ")
     };
 
@@ -197,8 +188,6 @@ bot.on("text", async (ctx) => {
 Новая заявка из бота:
 Имя: ${lead.name}
 Телефон: ${lead.phone}
-Дата: ${lead.date}
-Время: ${lead.time}
 Комментарий: ${lead.comment}
         `.trim()
       );
@@ -209,37 +198,28 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
   }
 
-  // Консультация — просто копим контекст
-  if (state.section === "consultation") {
-    state.context.push(raw);
-  }
-
-  // Сбор контекста для других разделов
+  // Копим контекст
   state.context.push(raw);
 
-  // Общий шаг «уточнение записи» для ЛЮБОЙ услуги
-  if (!state.phone) {
-    if (!state.invited) {
-      state.invited = true;
+  // Единый шаг приглашения на приём
+  if (!state.invited) {
+    state.invited = true;
 
-      return ctx.reply(
-        "Понимаю. Чтобы врач точно оценил ситуацию, лучше прийти на первичный приём.\n\n" +
-        "Сейчас действует акция на полный стоматологический check‑up.\n" +
-        "Когда вам удобнее — сегодня, завтра или в другой день?",
-        Markup.keyboard([
-          ["Сегодня", "Завтра", "Другой день"],
-          ["Акция"],
-          ["Назад"]
-        ]).resize()
-      );
-    }
-
-    // Если человек игнорирует кнопки
-    state.waitingForPhone = true;
-    return ctx.reply("Чтобы записать вас на приём, напишите, пожалуйста, номер телефона для связи.");
+    return ctx.reply(
+      "Понимаю. Чтобы врач точно оценил ситуацию, лучше прийти на первичный приём.\n\n" +
+      "Сейчас действует акция на полный стоматологический check‑up.\n" +
+      "Когда вам удобнее — сегодня, завтра или в другой день?",
+      Markup.keyboard([
+        ["Сегодня", "Завтра", "Другой день"],
+        ["Акция"],
+        ["Назад"]
+      ]).resize()
+    );
   }
 
-  return ctx.reply("Я зафиксировал информацию. Администратор свяжется с вами для уточнения деталей.");
+  // Если человек игнорирует кнопки
+  state.waitingForPhone = true;
+  return ctx.reply("Чтобы записать вас на приём, напишите, пожалуйста, номер телефона для связи.");
 });
 
 bot.launch();
