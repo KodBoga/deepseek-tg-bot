@@ -62,10 +62,13 @@ function createState() {
 }
 
 function resetState(state) {
+  state.section = null;
+  state.context = [];
   state.waitingForPhone = false;
   state.waitingForName = false;
   state.invited = false;
-  state.context = [];
+  state.phone = null;
+  state.name = null;
   state.date = null;
   state.time = null;
 }
@@ -84,7 +87,6 @@ bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
 
-  // Если state отсутствует — создаём новый
   if (!userState[chatId]) {
     userState[chatId] = createState();
   }
@@ -94,7 +96,6 @@ bot.on("text", async (ctx) => {
   // Назад
   if (raw === "Назад") {
     resetState(state);
-    state.section = null;
     return ctx.reply("Возвращаюсь в главное меню.", mainMenu());
   }
 
