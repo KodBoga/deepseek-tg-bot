@@ -202,7 +202,6 @@ bot.start((ctx) => {
   const state = userState[chatId];
   state.isAdmin = isAdmin(chatId);
 
-  // логируем визит
   upsertLead({
     tg_id: from.id,
     username: from.username,
@@ -291,6 +290,12 @@ bot.on("text", async (ctx) => {
       ].map(x => String(x).replace(/;/g, ",")).join(";"))
     ].join("\n");
 
+    const csvAllWithBom = "\uFEFF" + csvAll;
+
+    await ctx.replyWithDocument(
+      { source: Buffer.from(csvAllWithBom, "utf-8"), filename: `all_${fromDate}_${toDate}.csv` }
+    );
+
     // --- CSV #2: leads.csv ---
     const leadsOnly = rows.filter(v => v.status === "lead");
 
@@ -305,13 +310,10 @@ bot.on("text", async (ctx) => {
       ].map(x => String(x).replace(/;/g, ",")).join(";"))
     ].join("\n");
 
-    // отправляем оба файла
-    await ctx.replyWithDocument(
-      { source: Buffer.from(csvAll, "utf-8"), filename: `all_${fromDate}_${toDate}.csv` }
-    );
+    const csvLeadsWithBom = "\uFEFF" + csvLeads;
 
     await ctx.replyWithDocument(
-      { source: Buffer.from(csvLeads, "utf-8"), filename: `leads_${fromDate}_${toDate}.csv` }
+      { source: Buffer.from(csvLeadsWithBom, "utf-8"), filename: `leads_${fromDate}_${toDate}.csv` }
     );
 
     state.waitingCsvPeriod = false;
@@ -407,7 +409,6 @@ bot.on("text", async (ctx) => {
       comment: state.context.join(" ")
     };
 
-    // обновляем визитора до лида
     upsertLead({
       tg_id: from.id,
       username: from.username,
@@ -420,7 +421,6 @@ bot.on("text", async (ctx) => {
       context: lead.comment
     });
 
-    // отправляем лид админам
     for (const adminId of ADMIN_CHAT_IDS) {
       await ctx.telegram.sendMessage(
         adminId,
@@ -438,15 +438,12 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
   }
 
-  // Консультация — просто копим контекст
   if (state.section === "consultation") {
     state.context.push(raw);
   }
 
-  // Сбор контекста для других разделов
   state.context.push(raw);
 
-  // Единый шаг приглашения на приём
   if (!state.invited) {
     state.invited = true;
 
@@ -462,7 +459,6 @@ bot.on("text", async (ctx) => {
     );
   }
 
-  // Если человек игнорирует кнопки — считаем, что он «завис» без телефона
   upsertLead({
     tg_id: from.id,
     username: from.username,
@@ -477,4 +473,9 @@ bot.on("text", async (ctx) => {
   return ctx.reply("Чтобы записать вас на приём, напишите, пожалуйста, номер телефона для связи.");
 });
 
+// --- ЗАПУСК БОТА ---
+
 bot.launch();
+
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));
