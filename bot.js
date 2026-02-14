@@ -1,10 +1,123 @@
 import { Telegraf, Markup } from "telegraf";
+import fs from "fs";
+import path from "path";
+
+// --- НАСТРОЙКИ ---
 
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
 const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
   .split(",")
   .map(id => id.trim())
   .filter(Boolean);
+
+// --- ФАЙЛ ДЛЯ ЛОГОВ ---
+
+const DATA_DIR = path.resolve("data");
+const LEADS_FILE = path.join(DATA_DIR, "leads.json");
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+
+if (!fs.existsSync(LEADS_FILE)) {
+  fs.writeFileSync(LEADS_FILE, "[]", "utf-8");
+}
+
+function loadLeads() {
+  try {
+    const raw = fs.readFileSync(LEADS_FILE, "utf-8");
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("Error reading leads.json:", e.message);
+    return [];
+  }
+}
+
+function saveLeads(leads) {
+  try {
+    fs.writeFileSync(LEADS_FILE, JSON.stringify(leads, null, 2), "utf-8");
+  } catch (e) {
+    console.error("Error writing leads.json:", e.message);
+  }
+}
+
+let leads = loadLeads();
+
+// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
+
+function upsertLead({ tg_id, username, first_name, last_name, chat_id, status, phone, name, context }) {
+  const now = new Date().toISOString();
+  let v = leads.find(x => x.tg_id === tg_id);
+
+  if (!v) {
+    v = {
+      tg_id,
+      username: username || "",
+      first_name: first_name || "",
+      last_name: last_name || "",
+      chat_id,
+      status: status || "visit",
+      phone: phone || "",
+      name: name || "",
+      context: context || "",
+      createdAt: now,
+      updatedAt: now
+    };
+    leads.push(v);
+  } else {
+    v.username = username || v.username;
+    v.first_name = first_name || v.first_name;
+    v.last_name = last_name || v.last_name;
+    v.chat_id = chat_id || v.chat_id;
+    if (status) v.status = status;
+    if (phone) v.phone = phone;
+    if (name) v.name = name;
+    if (context) v.context = context;
+    v.updatedAt = now;
+  }
+
+  saveLeads(leads);
+}
+
+function formatDate(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getPeriodRange(option) {
+  const now = new Date();
+  let from, to;
+
+  if (option === "Сегодня") {
+    from = formatDate(now);
+    to = formatDate(now);
+  } else if (option === "Вчера") {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 1);
+    from = formatDate(d);
+    to = formatDate(d);
+  } else if (option === "Последние 7 дней") {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 6);
+    from = formatDate(d);
+    to = formatDate(now);
+  } else if (option === "Последние 30 дней") {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 29);
+    from = formatDate(d);
+    to = formatDate(now);
+  }
+
+  return { from, to };
+}
+
+function isAdmin(chatId) {
+  return ADMIN_CHAT_IDS.includes(String(chatId));
+}
+
+// --- СТАТИКА ---
 
 const userState = {};
 
@@ -47,6 +160,13 @@ function branchesMenu() {
   ]).resize();
 }
 
+function adminMenu() {
+  return Markup.keyboard([
+    ["📊 Выгрузить CSV"],
+    ["Назад"]
+  ]).resize();
+}
+
 function createState() {
   return {
     section: null,
@@ -55,7 +175,9 @@ function createState() {
     waitingForPhone: false,
     waitingForName: false,
     phone: null,
-    name: null
+    name: null,
+    isAdmin: false,
+    waitingCsvPeriod: false
   };
 }
 
@@ -67,11 +189,28 @@ function resetState(state) {
   state.waitingForName = false;
   state.phone = null;
   state.name = null;
+  state.waitingCsvPeriod = false;
 }
+
+// --- START ---
 
 bot.start((ctx) => {
   const chatId = ctx.chat.id;
+  const from = ctx.from;
+
   userState[chatId] = createState();
+  const state = userState[chatId];
+  state.isAdmin = isAdmin(chatId);
+
+  // логируем визит
+  upsertLead({
+    tg_id: from.id,
+    username: from.username,
+    first_name: from.first_name,
+    last_name: from.last_name,
+    chat_id: chatId,
+    status: "visit"
+  });
 
   ctx.reply(
     "Здравствуйте! Вас приветствует стоматология «МедГарант». Подскажите, пожалуйста, что вас интересует.",
@@ -79,17 +218,104 @@ bot.start((ctx) => {
   );
 });
 
+// --- ОСНОВНАЯ ЛОГИКА ---
+
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
+  const from = ctx.from;
 
   if (!userState[chatId]) userState[chatId] = createState();
   const state = userState[chatId];
+  if (isAdmin(chatId)) state.isAdmin = true;
+
+  // АДМИН: вход в меню
+  if (raw === "/admin" && state.isAdmin) {
+    resetState(state);
+    state.isAdmin = true;
+    return ctx.reply("Админ‑меню:", adminMenu());
+  }
 
   // Назад
   if (raw === "Назад") {
     resetState(state);
     return ctx.reply("Возвращаюсь в главное меню.", mainMenu());
+  }
+
+  // --- АДМИН: ВЫГРУЗКА CSV ---
+
+  if (state.isAdmin && raw === "📊 Выгрузить CSV") {
+    state.waitingCsvPeriod = true;
+    return ctx.reply(
+      "За какой период выгрузить CSV?",
+      Markup.keyboard([
+        ["Сегодня", "Вчера"],
+        ["Последние 7 дней", "Последние 30 дней"],
+        ["Назад"]
+      ]).resize()
+    );
+  }
+
+  if (state.isAdmin && state.waitingCsvPeriod) {
+    const allowed = ["Сегодня", "Вчера", "Последние 7 дней", "Последние 30 дней"];
+    if (!allowed.includes(raw)) {
+      if (raw === "Назад") {
+        state.waitingCsvPeriod = false;
+        return ctx.reply("Админ‑меню:", adminMenu());
+      }
+      return ctx.reply("Выберите период с кнопок.");
+    }
+
+    const { from: fromDate, to: toDate } = getPeriodRange(raw);
+    const fromTs = new Date(fromDate + "T00:00:00Z").getTime();
+    const toTs = new Date(toDate + "T23:59:59Z").getTime();
+
+    const rows = leads.filter(v => {
+      const t = new Date(v.createdAt).getTime();
+      return t >= fromTs && t <= toTs;
+    });
+
+    // --- CSV #1: all.csv ---
+    const headerAll = [
+      "tg_id","username","first_name","last_name","chat_id",
+      "status","phone","name","context","createdAt","updatedAt"
+    ];
+
+    const csvAll = [
+      headerAll.join(";"),
+      ...rows.map(v => [
+        v.tg_id, v.username, v.first_name, v.last_name, v.chat_id,
+        v.status, v.phone, v.name,
+        (v.context || "").replace(/\r?\n/g, " "),
+        v.createdAt, v.updatedAt
+      ].map(x => String(x).replace(/;/g, ",")).join(";"))
+    ].join("\n");
+
+    // --- CSV #2: leads.csv ---
+    const leadsOnly = rows.filter(v => v.status === "lead");
+
+    const headerLeads = ["name","phone","context","createdAt"];
+
+    const csvLeads = [
+      headerLeads.join(";"),
+      ...leadsOnly.map(v => [
+        v.name, v.phone,
+        (v.context || "").replace(/\r?\n/g, " "),
+        v.createdAt
+      ].map(x => String(x).replace(/;/g, ",")).join(";"))
+    ].join("\n");
+
+    // отправляем оба файла
+    await ctx.replyWithDocument(
+      { source: Buffer.from(csvAll, "utf-8"), filename: `all_${fromDate}_${toDate}.csv` }
+    );
+
+    await ctx.replyWithDocument(
+      { source: Buffer.from(csvLeads, "utf-8"), filename: `leads_${fromDate}_${toDate}.csv` }
+    );
+
+    state.waitingCsvPeriod = false;
+    return;
   }
 
   // График работы
@@ -181,6 +407,20 @@ bot.on("text", async (ctx) => {
       comment: state.context.join(" ")
     };
 
+    // обновляем визитора до лида
+    upsertLead({
+      tg_id: from.id,
+      username: from.username,
+      first_name: from.first_name,
+      last_name: from.last_name,
+      chat_id: chatId,
+      status: "lead",
+      phone: lead.phone,
+      name: lead.name,
+      context: lead.comment
+    });
+
+    // отправляем лид админам
     for (const adminId of ADMIN_CHAT_IDS) {
       await ctx.telegram.sendMessage(
         adminId,
@@ -198,7 +438,12 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
   }
 
-  // Копим контекст
+  // Консультация — просто копим контекст
+  if (state.section === "consultation") {
+    state.context.push(raw);
+  }
+
+  // Сбор контекста для других разделов
   state.context.push(raw);
 
   // Единый шаг приглашения на приём
@@ -217,7 +462,17 @@ bot.on("text", async (ctx) => {
     );
   }
 
-  // Если человек игнорирует кнопки
+  // Если человек игнорирует кнопки — считаем, что он «завис» без телефона
+  upsertLead({
+    tg_id: from.id,
+    username: from.username,
+    first_name: from.first_name,
+    last_name: from.last_name,
+    chat_id: chatId,
+    status: "no_phone",
+    context: state.context.join(" ")
+  });
+
   state.waitingForPhone = true;
   return ctx.reply("Чтобы записать вас на приём, напишите, пожалуйста, номер телефона для связи.");
 });
