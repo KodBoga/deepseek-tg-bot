@@ -8,28 +8,38 @@ const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
 
 const userState = {};
 
-const clarifyMap = [
-  {
-    keys: ["десна", "дёсна", "десны", "опухла"],
-    question: "А что именно с десной? Кровоточит, опухла, болит, есть неприятный запах?"
-  },
-  {
-    keys: ["кровоточ", "кровь"],
-    question: "Кровоточит при чистке, при еде или сама по себе?"
-  },
-  {
-    keys: ["камн", "налет", "налёт"],
-    question: "Налёт и камни больше беспокоят визуально или есть неприятные ощущения, запах?"
-  },
-  {
-    keys: ["запах"],
-    question: "Запах появился недавно или давно? Усиливается утром или после еды?"
-  },
-  {
-    keys: ["скол"],
-    question: "Скол большой или небольшой? Есть ли боль при накусывании или на холодное?"
-  }
-];
+const branches = {
+  "СПб, ул. Бадаева, д. 6, корп.1":
+    "СПб, ул. Бадаева, д. 6, корп.1\nм. Проспект Большевиков\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)",
+  "СПб, ул. Туристская, д. 10, корп. 1":
+    "СПб, ул. Туристская, д. 10, корп. 1\nм. Беговая\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)",
+  "СПб, Петровский проспект, д. 5":
+    "СПб, Петровский проспект, д. 5\nм. Спортивная\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)",
+  "СПб, ул. Киевская, д. 3А":
+    "СПб, ул. Киевская, д. 3А\nм. Фрунзенская\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)",
+  "г. Мурино, б-р Менделеева, д. 9, корп.1":
+    "г. Мурино, б-р Менделеева, д. 9, корп.1\nм. Девяткино\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)"
+};
+
+function mainMenu() {
+  return Markup.keyboard([
+    ["Зуб", "Десна"],
+    ["Брекеты", "Гигиена"],
+    ["Хочу консультацию"],
+    ["График работы"]
+  ]).resize();
+}
+
+function branchesMenu() {
+  return Markup.keyboard([
+    ["СПб, ул. Бадаева, д. 6, корп.1"],
+    ["СПб, ул. Туристская, д. 10, корп. 1"],
+    ["СПб, Петровский проспект, д. 5"],
+    ["СПб, ул. Киевская, д. 3А"],
+    ["г. Мурино, б-р Менделеева, д. 9, корп.1"],
+    ["Назад"]
+  ]).resize();
+}
 
 bot.start((ctx) => {
   const chatId = ctx.chat.id;
@@ -38,7 +48,6 @@ bot.start((ctx) => {
     context: [],
     waitingForPhone: false,
     waitingForName: false,
-    clarifyUsed: false,
     invited: false,
     phone: null,
     name: null,
@@ -47,13 +56,8 @@ bot.start((ctx) => {
   };
 
   ctx.reply(
-    "Здравствуйте! Вас приветствует стоматология «МедГарант». Подскажите, пожалуйста, какая услуга вас интересует.",
-    Markup.keyboard([
-      ["Чистка зубов", "Отбеливание", "Имплантация"],
-      ["Лечение кариеса", "Протезирование", "Виниры"],
-      ["Ортодонтия", "Удаление зубов", "Диагностика КЛКТ"],
-      ["Цены", "Акции", "График работы"]
-    ]).resize()
+    "Здравствуйте! Вас приветствует стоматология «МедГарант». Подскажите, пожалуйста, что вас интересует.",
+    mainMenu()
   );
 });
 
@@ -61,17 +65,22 @@ bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
   const text = raw.toLowerCase();
-  const state = (userState[chatId] ||= {
-    context: [],
-    waitingForPhone: false,
-    waitingForName: false,
-    clarifyUsed: false,
-    invited: false,
-    phone: null,
-    name: null,
-    date: null,
-    time: null
-  });
+  const state = userState[chatId];
+
+  // Назад
+  if (raw === "Назад") {
+    return ctx.reply("Возвращаюсь в главное меню.", mainMenu());
+  }
+
+  // График работы → показать филиалы
+  if (raw === "График работы") {
+    return ctx.reply("Выберите филиал:", branchesMenu());
+  }
+
+  // Если выбрали филиал
+  if (branches[raw]) {
+    return ctx.reply(branches[raw]);
+  }
 
   // Ожидание телефона
   if (state.waitingForPhone) {
@@ -130,20 +139,7 @@ bot.on("text", async (ctx) => {
 
   state.context.push(raw);
 
-  // Контекстный уточняющий вопрос (один раз)
-  if (!state.clarifyUsed) {
-    for (const item of clarifyMap) {
-      if (item.keys.some(k => text.includes(k))) {
-        state.clarifyUsed = true;
-        return ctx.reply(item.question);
-      }
-    }
-
-    state.clarifyUsed = true;
-    return ctx.reply("Понимаю. Расскажите, пожалуйста, чуть подробнее, что именно вас интересует.");
-  }
-
-  // Приглашение на приём + акция (один раз)
+  // Приглашение на приём
   if (!state.invited) {
     state.invited = true;
     return ctx.reply(
@@ -164,3 +160,5 @@ bot.on("text", async (ctx) => {
 });
 
 bot.launch();
+
+
