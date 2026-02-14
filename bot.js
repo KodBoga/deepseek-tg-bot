@@ -47,6 +47,20 @@ function branchesMenu() {
   ]).resize();
 }
 
+function createState() {
+  return {
+    section: null,
+    context: [],
+    waitingForPhone: false,
+    waitingForName: false,
+    invited: false,
+    phone: null,
+    name: null,
+    date: null,
+    time: null
+  };
+}
+
 function resetState(state) {
   state.waitingForPhone = false;
   state.waitingForName = false;
@@ -58,18 +72,7 @@ function resetState(state) {
 
 bot.start((ctx) => {
   const chatId = ctx.chat.id;
-
-  userState[chatId] = {
-    section: null,
-    context: [],
-    waitingForPhone: false,
-    waitingForName: false,
-    invited: false,
-    phone: null,
-    name: null,
-    date: null,
-    time: null
-  };
+  userState[chatId] = createState();
 
   ctx.reply(
     "Здравствуйте! Вас приветствует стоматология «МедГарант». Подскажите, пожалуйста, что вас интересует.",
@@ -80,6 +83,12 @@ bot.start((ctx) => {
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
+
+  // Если state отсутствует — создаём новый
+  if (!userState[chatId]) {
+    userState[chatId] = createState();
+  }
+
   const state = userState[chatId];
 
   // Назад
@@ -89,7 +98,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Возвращаюсь в главное меню.", mainMenu());
   }
 
-  // График работы — всегда перебивает любой сценарий
+  // График работы
   if (raw === "График работы") {
     resetState(state);
     state.section = "branches";
@@ -101,7 +110,7 @@ bot.on("text", async (ctx) => {
     return ctx.reply(branches[raw]);
   }
 
-  // Обработка кнопок главного меню — ВСЕГДА
+  // Главное меню
   if (["Зуб", "Десна", "Брекеты", "Гигиена", "Хочу консультацию"].includes(raw)) {
     resetState(state);
     state.section = raw;
@@ -164,12 +173,12 @@ bot.on("text", async (ctx) => {
       );
     }
 
-    userState[chatId] = null;
+    delete userState[chatId];
 
     return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
   }
 
-  // Раздел консультации — ждём один ответ, потом приглашаем
+  // Консультация
   if (state.section === "consultation") {
     state.context.push(raw);
 
@@ -208,3 +217,5 @@ bot.on("text", async (ctx) => {
 });
 
 bot.launch();
+
+
