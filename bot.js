@@ -558,7 +558,7 @@ bot.on("text", async (ctx) => {
       "Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.",
       Markup.inlineKeyboard([
         Markup.button.url(
-          "Перейти на наш ТГ‑канал",
+          "Наш Telegram - канал. Здесь выгодно!",
           "https://t.me/medgarantspb?utm_source=bot&utm_medium=lead&utm_campaign=invite"
         )
       ])
@@ -641,3 +641,4 @@ bot.launch();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+
