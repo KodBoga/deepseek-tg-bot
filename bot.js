@@ -64,11 +64,11 @@ function saveInvites(data) {
 
 let invites = loadInvites();
 
-function hasBeenInvited(userId: number) {
-  return invites.some((x: any) => x.userId === userId);
+function hasBeenInvited(userId) {
+  return invites.some(x => x.userId === userId);
 }
 
-function logInvite(userId: number) {
+function logInvite(userId) {
   invites.push({
     userId,
     invitedAt: new Date().toISOString()
@@ -88,19 +88,9 @@ function upsertLead({
   phone,
   name,
   context
-}: {
-  tg_id: number;
-  username?: string;
-  first_name?: string;
-  last_name?: string;
-  chat_id: number;
-  status?: string;
-  phone?: string;
-  name?: string;
-  context?: string;
 }) {
   const now = new Date().toISOString();
-  let v: any = leads.find((x: any) => x.tg_id === tg_id);
+  let v = leads.find(x => x.tg_id === tg_id);
 
   if (!v) {
     v = {
@@ -132,17 +122,17 @@ function upsertLead({
   saveLeads(leads);
 }
 
-function formatDate(d: Date) {
+function formatDate(d) {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
-function getPeriodRange(option: string) {
+function getPeriodRange(option) {
   const now = new Date();
-  let from: string | undefined;
-  let to: string | undefined;
+  let from;
+  let to;
 
   if (option === "Сегодня") {
     from = formatDate(now);
@@ -167,11 +157,11 @@ function getPeriodRange(option: string) {
   return { from, to };
 }
 
-function isAdmin(chatId: number) {
+function isAdmin(chatId) {
   return ADMIN_CHAT_IDS.includes(String(chatId));
 }
 
-function isRealUser(from: any) {
+function isRealUser(from) {
   if (!from) return false;
   if (from.is_bot) return false;
   if ((from.username || "").toLowerCase().endsWith("bot")) return false;
@@ -184,7 +174,7 @@ function isWorkingHours() {
   return hour >= 10 && hour < 20;
 }
 
-async function isUserInChannel(ctx: any, userId: number) {
+async function isUserInChannel(ctx, userId) {
   try {
     const member = await ctx.telegram.getChatMember("@medgarantspb", userId);
     return ["member", "administrator", "creator"].includes(member.status);
@@ -195,9 +185,9 @@ async function isUserInChannel(ctx: any, userId: number) {
 
 // --- СТАТИКА ---
 
-const userState: Record<number, any> = {};
+const userState = {};
 
-const branches: Record<string, string> = {
+const branches = {
   "СПб, ул. Бадаева, д. 6, корп.1":
     "СПб, ул. Бадаева, д. 6, корп.1\nм. Проспект Большевиков\n9:00—21:00 (ежедневно)\n<a href=\"tel:+78122401222\">+7 (812) 240‑12‑22</a>",
   "СПб, ул. Туристская, д. 10, корп. 1":
@@ -254,19 +244,19 @@ function logsMenu() {
 
 function createState() {
   return {
-    section: null as string | null,
-    context: [] as string[],
+    section: null,
+    context: [],
     invited: false,
     waitingForPhone: false,
     waitingForName: false,
-    phone: null as string | null,
-    name: null as string | null,
+    phone: null,
+    name: null,
     isAdmin: false,
     waitingCsvPeriod: false
   };
 }
 
-function resetState(state: any) {
+function resetState(state) {
   state.section = null;
   state.context = [];
   state.invited = false;
@@ -338,7 +328,7 @@ bot.on("text", async (ctx) => {
         source: INVITES_FILE,
         filename: "invites.json"
       });
-    } catch (e: any) {
+    } catch (e) {
       console.error("Ошибка отправки invites.json:", e.message);
       return ctx.reply("Не удалось отправить файл invites.json");
     }
@@ -359,7 +349,7 @@ bot.on("text", async (ctx) => {
       saveInvites(invites);
 
       return ctx.reply(`Логи очищены.\nРезервная копия: ${backupName}`);
-    } catch (e: any) {
+    } catch (e) {
       console.error("Ошибка очистки логов:", e.message);
       return ctx.reply("Не удалось очистить логи.");
     }
@@ -398,7 +388,7 @@ bot.on("text", async (ctx) => {
     const fromTs = new Date(fromDate + "T00:00:00Z").getTime();
     const toTs = new Date(toDate + "T23:59:59Z").getTime();
 
-    const rows = leads.filter((v: any) => {
+    const rows = leads.filter(v => {
       const t = new Date(v.createdAt).getTime();
       return t >= fromTs && t <= toTs;
     });
@@ -411,12 +401,12 @@ bot.on("text", async (ctx) => {
 
     const csvAll = [
       headerAll.join(";"),
-      ...rows.map((v: any) => [
+      ...rows.map(v => [
         v.tg_id, v.username, v.first_name, v.last_name, v.chat_id,
         v.status, v.phone, v.name,
         (v.context || "").replace(/\r?\n/g, " "),
         v.createdAt, v.updatedAt
-      ].map((x: any) => String(x).replace(/;/g, ",")).join(";"))
+      ].map(x => String(x).replace(/;/g, ",")).join(";"))
     ].join("\n");
 
     const csvAllWithBom = "\uFEFF" + csvAll;
@@ -426,17 +416,17 @@ bot.on("text", async (ctx) => {
     );
 
     // --- CSV #2: leads.csv ---
-    const leadsOnly = rows.filter((v: any) => v.status === "lead");
+    const leadsOnly = rows.filter(v => v.status === "lead");
 
     const headerLeads = ["name","phone","context","createdAt"];
 
     const csvLeads = [
       headerLeads.join(";"),
-      ...leadsOnly.map((v: any) => [
+      ...leadsOnly.map(v => [
         v.name, v.phone,
         (v.context || "").replace(/\r?\n/g, " "),
         v.createdAt
-      ].map((x: any) => String(x).replace(/;/g, ",")).join(";"))
+      ].map(x => String(x).replace(/;/g, ",")).join(";"))
     ].join("\n");
 
     const csvLeadsWithBom = "\uFEFF" + csvLeads;
@@ -602,7 +592,7 @@ bot.on("text", async (ctx) => {
         );
 
         logInvite(from.id);
-      } catch (e: any) {
+      } catch (e) {
         console.error("Ошибка автоприглашения:", e.message);
       }
     }, 30 * 60 * 1000);
