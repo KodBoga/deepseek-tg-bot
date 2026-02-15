@@ -582,7 +582,7 @@ bot.on("text", async (ctx) => {
               inline_keyboard: [
                 [
                   {
-                    text: "Перейти в ТГ‑канал",
+                    text: "Наш Telegram - канал. Здесь выгодно!",
                     url: "https://t.me/medgarantspb?utm_source=bot&utm_medium=autoinvite&utm_campaign=30min"
                   }
                 ]
@@ -641,4 +641,5 @@ bot.launch();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+
 
