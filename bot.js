@@ -10,10 +10,11 @@ const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
   .map(id => id.trim())
   .filter(Boolean);
 
-// --- ФАЙЛ ДЛЯ ЛОГОВ ---
+// --- ФАЙЛЫ ДЛЯ ЛОГОВ ---
 
 const DATA_DIR = path.resolve("data");
 const LEADS_FILE = path.join(DATA_DIR, "leads.json");
+const INVITES_FILE = path.join(DATA_DIR, "invites.json");
 
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -21,6 +22,10 @@ if (!fs.existsSync(DATA_DIR)) {
 
 if (!fs.existsSync(LEADS_FILE)) {
   fs.writeFileSync(LEADS_FILE, "[]", "utf-8");
+}
+
+if (!fs.existsSync(INVITES_FILE)) {
+  fs.writeFileSync(INVITES_FILE, "[]", "utf-8");
 }
 
 function loadLeads() {
@@ -43,11 +48,59 @@ function saveLeads(leads) {
 
 let leads = loadLeads();
 
+// --- INVITES ---
+
+function loadInvites() {
+  try {
+    return JSON.parse(fs.readFileSync(INVITES_FILE, "utf-8"));
+  } catch {
+    return [];
+  }
+}
+
+function saveInvites(data) {
+  fs.writeFileSync(INVITES_FILE, JSON.stringify(data, null, 2), "utf-8");
+}
+
+let invites = loadInvites();
+
+function hasBeenInvited(userId: number) {
+  return invites.some((x: any) => x.userId === userId);
+}
+
+function logInvite(userId: number) {
+  invites.push({
+    userId,
+    invitedAt: new Date().toISOString()
+  });
+  saveInvites(invites);
+}
+
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
-function upsertLead({ tg_id, username, first_name, last_name, chat_id, status, phone, name, context }) {
+function upsertLead({
+  tg_id,
+  username,
+  first_name,
+  last_name,
+  chat_id,
+  status,
+  phone,
+  name,
+  context
+}: {
+  tg_id: number;
+  username?: string;
+  first_name?: string;
+  last_name?: string;
+  chat_id: number;
+  status?: string;
+  phone?: string;
+  name?: string;
+  context?: string;
+}) {
   const now = new Date().toISOString();
-  let v = leads.find(x => x.tg_id === tg_id);
+  let v: any = leads.find((x: any) => x.tg_id === tg_id);
 
   if (!v) {
     v = {
@@ -79,16 +132,17 @@ function upsertLead({ tg_id, username, first_name, last_name, chat_id, status, p
   saveLeads(leads);
 }
 
-function formatDate(d) {
+function formatDate(d: Date) {
   const year = d.getFullYear();
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
 
-function getPeriodRange(option) {
+function getPeriodRange(option: string) {
   const now = new Date();
-  let from, to;
+  let from: string | undefined;
+  let to: string | undefined;
 
   if (option === "Сегодня") {
     from = formatDate(now);
@@ -113,25 +167,47 @@ function getPeriodRange(option) {
   return { from, to };
 }
 
-function isAdmin(chatId) {
+function isAdmin(chatId: number) {
   return ADMIN_CHAT_IDS.includes(String(chatId));
+}
+
+function isRealUser(from: any) {
+  if (!from) return false;
+  if (from.is_bot) return false;
+  if ((from.username || "").toLowerCase().endsWith("bot")) return false;
+  return true;
+}
+
+function isWorkingHours() {
+  const now = new Date();
+  const hour = now.getHours();
+  return hour >= 10 && hour < 20;
+}
+
+async function isUserInChannel(ctx: any, userId: number) {
+  try {
+    const member = await ctx.telegram.getChatMember("@medgarantspb", userId);
+    return ["member", "administrator", "creator"].includes(member.status);
+  } catch {
+    return false;
+  }
 }
 
 // --- СТАТИКА ---
 
-const userState = {};
+const userState: Record<number, any> = {};
 
-const branches = {
+const branches: Record<string, string> = {
   "СПб, ул. Бадаева, д. 6, корп.1":
-    "СПб, ул. Бадаева, д. 6, корп.1\nм. Проспект Большевиков\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)",
+    "СПб, ул. Бадаева, д. 6, корп.1\nм. Проспект Большевиков\n9:00—21:00 (ежедневно)\n<a href=\"tel:+78122401222\">+7 (812) 240‑12‑22</a>",
   "СПб, ул. Туристская, д. 10, корп. 1":
-    "СПб, ул. Туристская, д. 10, корп. 1\nм. Беговая\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)",
+    "СПб, ул. Туристская, д. 10, корп. 1\nм. Беговая\n9:00—21:00 (ежедневно)\n<a href=\"tel:+78122401222\">+7 (812) 240‑12‑22</a>",
   "СПб, Петровский проспект, д. 5":
-    "СПб, Петровский проспект, д. 5\nм. Спортивная\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)",
+    "СПб, Петровский проспект, д. 5\nм. Спортивная\n9:00—21:00 (ежедневно)\n<a href=\"tel:+78122401222\">+7 (812) 240‑12‑22</a>",
   "СПб, ул. Киевская, д. 3А":
-    "СПб, ул. Киевская, д. 3А\nм. Фрунзенская\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)",
+    "СПб, ул. Киевская, д. 3А\nм. Фрунзенская\n9:00—21:00 (ежедневно)\n<a href=\"tel:+78122401222\">+7 (812) 240‑12‑22</a>",
   "г. Мурино, б-р Менделеева, д. 9, корп.1":
-    "г. Мурино, б-р Менделеева, д. 9, корп.1\nм. Девяткино\n+7 (812) 240‑12‑22\n9:00—21:00 (ежедневно)"
+    "г. Мурино, б-р Менделеева, д. 9, корп.1\nм. Девяткино\n9:00—21:00 (ежедневно)\n<a href=\"tel:+78122401222\">+7 (812) 240‑12‑22</a>"
 };
 
 function mainMenu() {
@@ -163,25 +239,34 @@ function branchesMenu() {
 function adminMenu() {
   return Markup.keyboard([
     ["📊 Выгрузить CSV"],
+    ["📁 Управление логами"],
+    ["Назад"]
+  ]).resize();
+}
+
+function logsMenu() {
+  return Markup.keyboard([
+    ["📥 Скачать invites.json"],
+    ["🧹 Очистить логи"],
     ["Назад"]
   ]).resize();
 }
 
 function createState() {
   return {
-    section: null,
-    context: [],
+    section: null as string | null,
+    context: [] as string[],
     invited: false,
     waitingForPhone: false,
     waitingForName: false,
-    phone: null,
-    name: null,
+    phone: null as string | null,
+    name: null as string | null,
     isAdmin: false,
     waitingCsvPeriod: false
   };
 }
 
-function resetState(state) {
+function resetState(state: any) {
   state.section = null;
   state.context = [];
   state.invited = false;
@@ -241,6 +326,45 @@ bot.on("text", async (ctx) => {
     return ctx.reply("Возвращаюсь в главное меню.", mainMenu());
   }
 
+  // --- АДМИН: УПРАВЛЕНИЕ ЛОГАМИ ---
+
+  if (state.isAdmin && raw === "📁 Управление логами") {
+    return ctx.reply("Управление логами:", logsMenu());
+  }
+
+  if (state.isAdmin && raw === "📥 Скачать invites.json") {
+    try {
+      return await ctx.replyWithDocument({
+        source: INVITES_FILE,
+        filename: "invites.json"
+      });
+    } catch (e: any) {
+      console.error("Ошибка отправки invites.json:", e.message);
+      return ctx.reply("Не удалось отправить файл invites.json");
+    }
+  }
+
+  if (state.isAdmin && raw === "🧹 Очистить логи") {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+
+    const backupName = `invites_backup_${yyyy}-${mm}-${dd}.json`;
+    const backupPath = path.join(DATA_DIR, backupName);
+
+    try {
+      fs.copyFileSync(INVITES_FILE, backupPath);
+      invites = [];
+      saveInvites(invites);
+
+      return ctx.reply(`Логи очищены.\nРезервная копия: ${backupName}`);
+    } catch (e: any) {
+      console.error("Ошибка очистки логов:", e.message);
+      return ctx.reply("Не удалось очистить логи.");
+    }
+  }
+
   // --- АДМИН: ВЫГРУЗКА CSV ---
 
   if (state.isAdmin && raw === "📊 Выгрузить CSV") {
@@ -266,10 +390,15 @@ bot.on("text", async (ctx) => {
     }
 
     const { from: fromDate, to: toDate } = getPeriodRange(raw);
+    if (!fromDate || !toDate) {
+      state.waitingCsvPeriod = false;
+      return ctx.reply("Не удалось определить период.");
+    }
+
     const fromTs = new Date(fromDate + "T00:00:00Z").getTime();
     const toTs = new Date(toDate + "T23:59:59Z").getTime();
 
-    const rows = leads.filter(v => {
+    const rows = leads.filter((v: any) => {
       const t = new Date(v.createdAt).getTime();
       return t >= fromTs && t <= toTs;
     });
@@ -282,12 +411,12 @@ bot.on("text", async (ctx) => {
 
     const csvAll = [
       headerAll.join(";"),
-      ...rows.map(v => [
+      ...rows.map((v: any) => [
         v.tg_id, v.username, v.first_name, v.last_name, v.chat_id,
         v.status, v.phone, v.name,
         (v.context || "").replace(/\r?\n/g, " "),
         v.createdAt, v.updatedAt
-      ].map(x => String(x).replace(/;/g, ",")).join(";"))
+      ].map((x: any) => String(x).replace(/;/g, ",")).join(";"))
     ].join("\n");
 
     const csvAllWithBom = "\uFEFF" + csvAll;
@@ -297,17 +426,17 @@ bot.on("text", async (ctx) => {
     );
 
     // --- CSV #2: leads.csv ---
-    const leadsOnly = rows.filter(v => v.status === "lead");
+    const leadsOnly = rows.filter((v: any) => v.status === "lead");
 
     const headerLeads = ["name","phone","context","createdAt"];
 
     const csvLeads = [
       headerLeads.join(";"),
-      ...leadsOnly.map(v => [
+      ...leadsOnly.map((v: any) => [
         v.name, v.phone,
         (v.context || "").replace(/\r?\n/g, " "),
         v.createdAt
-      ].map(x => String(x).replace(/;/g, ",")).join(";"))
+      ].map((x: any) => String(x).replace(/;/g, ",")).join(";"))
     ].join("\n");
 
     const csvLeadsWithBom = "\uFEFF" + csvLeads;
@@ -329,7 +458,7 @@ bot.on("text", async (ctx) => {
 
   // Выбор филиала
   if (state.section === "branches" && branches[raw]) {
-    return ctx.reply(branches[raw]);
+    return ctx.reply(branches[raw], { parse_mode: "HTML" });
   }
 
   // Главное меню
@@ -435,7 +564,50 @@ bot.on("text", async (ctx) => {
 
     delete userState[chatId];
 
-    return ctx.reply("Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.");
+    await ctx.reply(
+      "Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.",
+      Markup.inlineKeyboard([
+        Markup.button.url(
+          "Перейти на наш ТГ‑канал",
+          "https://t.me/medgarantspb?utm_source=bot&utm_medium=lead&utm_campaign=invite"
+        )
+      ])
+    );
+
+    // автоприглашение через 30 минут
+    setTimeout(async () => {
+      try {
+        if (!isRealUser(from)) return;
+        if (hasBeenInvited(from.id)) return;
+        if (!isWorkingHours()) return;
+
+        const inChannel = await isUserInChannel(ctx, from.id);
+        if (inChannel) return;
+
+        await ctx.telegram.sendMessage(
+          chatId,
+          "Будем рады видеть вас в нашем Telegram‑канале 😊",
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: "Перейти в ТГ‑канал",
+                    url: "https://t.me/medgarantspb?utm_source=bot&utm_medium=autoinvite&utm_campaign=30min"
+                  }
+                ]
+              ]
+            }
+          }
+        );
+
+        logInvite(from.id);
+      } catch (e: any) {
+        console.error("Ошибка автоприглашения:", e.message);
+      }
+    }, 30 * 60 * 1000);
+
+    return;
   }
 
   if (state.section === "consultation") {
