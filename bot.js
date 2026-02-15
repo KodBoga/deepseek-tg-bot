@@ -555,7 +555,7 @@ bot.on("text", async (ctx) => {
     delete userState[chatId];
 
     await ctx.reply(
-      "Спасибо! Я передал вашу заявку администратору. Мы свяжемся с вами в ближайшее время.",
+      "Спасибо! Я передал вашу заявку администратору. Мы скоро свяжемся с вами!\u2063",
       Markup.inlineKeyboard([
         Markup.button.url(
           "Наш Telegram - канал. Здесь выгодно!",
@@ -606,7 +606,7 @@ bot.on("text", async (ctx) => {
 
   state.context.push(raw);
 
-  if (!state.invited) {
+  if (!state.invited && !state.waitingForPhone && !state.waitingForName) {
     state.invited = true;
 
     return ctx.reply(
