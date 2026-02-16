@@ -10,30 +10,19 @@ const ADMIN_CHAT_IDS = (process.env.ADMIN_CHAT_IDS || "")
   .map(id => id.trim())
   .filter(Boolean);
 
-// --- ФАЙЛЫ ДЛЯ ЛОГОВ ---
+// --- ФАЙЛЫ ---
 
 const DATA_DIR = path.resolve("data");
 const LEADS_FILE = path.join(DATA_DIR, "leads.json");
 const INVITES_FILE = path.join(DATA_DIR, "invites.json");
 
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-}
-
-if (!fs.existsSync(LEADS_FILE)) {
-  fs.writeFileSync(LEADS_FILE, "[]", "utf-8");
-}
-
-if (!fs.existsSync(INVITES_FILE)) {
-  fs.writeFileSync(INVITES_FILE, "[]", "utf-8");
-}
+if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(LEADS_FILE)) fs.writeFileSync(LEADS_FILE, "[]", "utf-8");
+if (!fs.existsSync(INVITES_FILE)) fs.writeFileSync(INVITES_FILE, "[]", "utf-8");
 
 function loadLeads() {
-  try {
-    return JSON.parse(fs.readFileSync(LEADS_FILE, "utf-8"));
-  } catch {
-    return [];
-  }
+  try { return JSON.parse(fs.readFileSync(LEADS_FILE, "utf-8")); }
+  catch { return []; }
 }
 
 function saveLeads(leads) {
@@ -45,11 +34,8 @@ let leads = loadLeads();
 // --- INVITES ---
 
 function loadInvites() {
-  try {
-    return JSON.parse(fs.readFileSync(INVITES_FILE, "utf-8"));
-  } catch {
-    return [];
-  }
+  try { return JSON.parse(fs.readFileSync(INVITES_FILE, "utf-8")); }
+  catch { return []; }
 }
 
 function saveInvites(data) {
@@ -70,42 +56,43 @@ function logInvite(userId) {
   saveInvites(invites);
 }
 
-// --- ТАЙМЕР НЕАКТИВНОСТИ 60 СЕК ---
+// --- CRON: проверка неактивных пользователей каждые 10 сек ---
 
-const inactivityTimers = {};
+setInterval(async () => {
+  const now = Date.now();
 
-function startInactivityTimer(ctx, userId, chatId) {
-  if (inactivityTimers[userId]) {
-    clearTimeout(inactivityTimers[userId]);
-  }
+  for (const lead of leads) {
+    if (!lead.lastActivityAt) continue;
+    if (hasBeenInvited(lead.tg_id)) continue;
 
-  inactivityTimers[userId] = setTimeout(async () => {
-    try {
-      if (hasBeenInvited(userId)) return;
+    const last = new Date(lead.lastActivityAt).getTime();
 
-      await ctx.telegram.sendMessage(
-        chatId,
-        "Будем рады видеть вас в нашем Telegram‑канале 😊",
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [
-                {
-                  text: "Наш Telegram - канал. Здесь выгодно!",
-                  url: "https://t.me/medgarantspb?utm_source=bot&utm_medium=inactivity&utm_campaign=60sec"
-                }
+    if (now - last > 60 * 1000) {
+      try {
+        await bot.telegram.sendMessage(
+          lead.chat_id,
+          "Будем рады видеть вас в нашем Telegram‑канале 😊",
+          {
+            reply_markup: {
+              inline_keyboard: [
+                [
+                  {
+                    text: "Наш Telegram - канал. Здесь выгодно!",
+                    url: "https://t.me/medgarantspb?utm_source=bot&utm_medium=cron&utm_campaign=60sec"
+                  }
+                ]
               ]
-            ]
+            }
           }
-        }
-      );
+        );
 
-      logInvite(userId);
-    } catch (e) {
-      console.error("Ошибка автоприглашения по неактивности:", e.message);
+        logInvite(lead.tg_id);
+      } catch (e) {
+        console.error("Ошибка CRON‑приглашения:", e.message);
+      }
     }
-  }, 60 * 1000);
-}
+  }
+}, 10 * 1000);
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
 function upsertLead({
@@ -133,6 +120,7 @@ function upsertLead({
       phone: phone || "",
       name: name || "",
       context: context || "",
+      lastActivityAt: now,
       createdAt: now,
       updatedAt: now
     };
@@ -146,6 +134,7 @@ function upsertLead({
     if (phone) v.phone = phone;
     if (name) v.name = name;
     if (context) v.context = context;
+    v.lastActivityAt = now;
     v.updatedAt = now;
   }
 
@@ -268,8 +257,15 @@ bot.on("text", async (ctx) => {
   const raw = ctx.message.text.trim();
   const from = ctx.from;
 
-  // запуск таймера неактивности на 60 секунд
-  startInactivityTimer(ctx, from.id, chatId);
+  // обновляем активность пользователя
+  upsertLead({
+    tg_id: from.id,
+    username: from.username,
+    first_name: from.first_name,
+    last_name: from.last_name,
+    chat_id: chatId,
+    status: "active"
+  });
 
   if (!userState[chatId]) userState[chatId] = createState();
   const state = userState[chatId];
@@ -300,29 +296,21 @@ bot.on("text", async (ctx) => {
         source: INVITES_FILE,
         filename: "invites.json"
       });
-    } catch (e) {
-      console.error("Ошибка отправки invites.json:", e.message);
+    } catch {
       return ctx.reply("Не удалось отправить файл invites.json");
     }
   }
 
   if (state.isAdmin && raw === "🧹 Очистить логи") {
-    const now = new Date();
-    const yyyy = now.getFullYear();
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
-    const dd = String(now.getDate()).padStart(2, "0");
-
-    const backupName = `invites_backup_${yyyy}-${mm}-${dd}.json`;
+    const backupName = `invites_backup_${Date.now()}.json`;
     const backupPath = path.join(DATA_DIR, backupName);
 
     try {
       fs.copyFileSync(INVITES_FILE, backupPath);
       invites = [];
       saveInvites(invites);
-
       return ctx.reply(`Логи очищены.\nРезервная копия: ${backupName}`);
-    } catch (e) {
-      console.error("Ошибка очистки логов:", e.message);
+    } catch {
       return ctx.reply("Не удалось очистить логи.");
     }
   }
@@ -353,23 +341,17 @@ bot.on("text", async (ctx) => {
 
     const now = new Date();
     function formatDate(d) {
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, "0");
-      const day = String(d.getDate()).padStart(2, "0");
-      return `${year}-${month}-${day}`;
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
     }
 
-    let fromDate;
-    let toDate;
+    let fromDate, toDate;
 
     if (raw === "Сегодня") {
-      fromDate = formatDate(now);
-      toDate = formatDate(now);
+      fromDate = toDate = formatDate(now);
     } else if (raw === "Вчера") {
       const d = new Date(now);
       d.setDate(d.getDate() - 1);
-      fromDate = formatDate(d);
-      toDate = formatDate(d);
+      fromDate = toDate = formatDate(d);
     } else if (raw === "Последние 7 дней") {
       const d = new Date(now);
       d.setDate(d.getDate() - 6);
@@ -380,11 +362,6 @@ bot.on("text", async (ctx) => {
       d.setDate(d.getDate() - 29);
       fromDate = formatDate(d);
       toDate = formatDate(now);
-    }
-
-    if (!fromDate || !toDate) {
-      state.waitingCsvPeriod = false;
-      return ctx.reply("Не удалось определить период.");
     }
 
     const fromTs = new Date(fromDate + "T00:00:00Z").getTime();
@@ -410,11 +387,10 @@ bot.on("text", async (ctx) => {
       ].map(x => String(x).replace(/;/g, ",")).join(";"))
     ].join("\n");
 
-    const csvAllWithBom = "\uFEFF" + csvAll;
-
-    await ctx.replyWithDocument(
-      { source: Buffer.from(csvAllWithBom, "utf-8"), filename: `all_${fromDate}_${toDate}.csv` }
-    );
+    await ctx.replyWithDocument({
+      source: Buffer.from("\uFEFF" + csvAll, "utf-8"),
+      filename: `all_${fromDate}_${toDate}.csv`
+    });
 
     const leadsOnly = rows.filter(v => v.status === "lead");
 
@@ -429,11 +405,10 @@ bot.on("text", async (ctx) => {
       ].map(x => String(x).replace(/;/g, ",")).join(";"))
     ].join("\n");
 
-    const csvLeadsWithBom = "\uFEFF" + csvLeads;
-
-    await ctx.replyWithDocument(
-      { source: Buffer.from(csvLeadsWithBom, "utf-8"), filename: `leads_${fromDate}_${toDate}.csv` }
-    );
+    await ctx.replyWithDocument({
+      source: Buffer.from("\uFEFF" + csvLeads, "utf-8"),
+      filename: `leads_${fromDate}_${toDate}.csv`
+    });
 
     state.waitingCsvPeriod = false;
     return;
@@ -474,7 +449,7 @@ bot.on("text", async (ctx) => {
     }
   }
 
-  // Кнопка "🟣 Акция Check‑Up 🟣"
+  // Акция Check‑Up
   if (raw === "🟣 Акция Check‑Up 🟣") {
     return ctx.replyWithPhoto(
       {
@@ -567,6 +542,7 @@ bot.on("text", async (ctx) => {
     return;
   }
 
+  // консультация
   if (state.section === "consultation") {
     state.context.push(raw);
   }
@@ -607,5 +583,3 @@ bot.launch();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
-
-
