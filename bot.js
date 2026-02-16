@@ -30,20 +30,14 @@ if (!fs.existsSync(INVITES_FILE)) {
 
 function loadLeads() {
   try {
-    const raw = fs.readFileSync(LEADS_FILE, "utf-8");
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error("Error reading leads.json:", e.message);
+    return JSON.parse(fs.readFileSync(LEADS_FILE, "utf-8"));
+  } catch {
     return [];
   }
 }
 
 function saveLeads(leads) {
-  try {
-    fs.writeFileSync(LEADS_FILE, JSON.stringify(leads, null, 2), "utf-8");
-  } catch (e) {
-    console.error("Error writing leads.json:", e.message);
-  }
+  fs.writeFileSync(LEADS_FILE, JSON.stringify(leads, null, 2), "utf-8");
 }
 
 let leads = loadLeads();
@@ -76,6 +70,42 @@ function logInvite(userId) {
   saveInvites(invites);
 }
 
+// --- ТАЙМЕР НЕАКТИВНОСТИ 60 СЕК ---
+
+const inactivityTimers = {};
+
+function startInactivityTimer(ctx, userId, chatId) {
+  if (inactivityTimers[userId]) {
+    clearTimeout(inactivityTimers[userId]);
+  }
+
+  inactivityTimers[userId] = setTimeout(async () => {
+    try {
+      if (hasBeenInvited(userId)) return;
+
+      await ctx.telegram.sendMessage(
+        chatId,
+        "Будем рады видеть вас в нашем Telegram‑канале 😊",
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Наш Telegram - канал. Здесь выгодно!",
+                  url: "https://t.me/medgarantspb?utm_source=bot&utm_medium=inactivity&utm_campaign=60sec"
+                }
+              ]
+            ]
+          }
+        }
+      );
+
+      logInvite(userId);
+    } catch (e) {
+      console.error("Ошибка автоприглашения по неактивности:", e.message);
+    }
+  }, 60 * 1000);
+}
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 
 function upsertLead({
@@ -122,68 +152,9 @@ function upsertLead({
   saveLeads(leads);
 }
 
-function formatDate(d) {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
-function getPeriodRange(option) {
-  const now = new Date();
-  let from;
-  let to;
-
-  if (option === "Сегодня") {
-    from = formatDate(now);
-    to = formatDate(now);
-  } else if (option === "Вчера") {
-    const d = new Date(now);
-    d.setDate(d.getDate() - 1);
-    from = formatDate(d);
-    to = formatDate(d);
-  } else if (option === "Последние 7 дней") {
-    const d = new Date(now);
-    d.setDate(d.getDate() - 6);
-    from = formatDate(d);
-    to = formatDate(now);
-  } else if (option === "Последние 30 дней") {
-    const d = new Date(now);
-    d.setDate(d.getDate() - 29);
-    from = formatDate(d);
-    to = formatDate(now);
-  }
-
-  return { from, to };
-}
-
 function isAdmin(chatId) {
   return ADMIN_CHAT_IDS.includes(String(chatId));
 }
-
-function isRealUser(from) {
-  if (!from) return false;
-  if (from.is_bot) return false;
-  if ((from.username || "").toLowerCase().endsWith("bot")) return false;
-  return true;
-}
-
-function isWorkingHours() {
-  const now = new Date();
-  const hour = now.getHours();
-  return hour >= 10 && hour < 20;
-}
-
-async function isUserInChannel(ctx, userId) {
-  try {
-    const member = await ctx.telegram.getChatMember("@medgarantspb", userId);
-    return ["member", "administrator", "creator"].includes(member.status);
-  } catch {
-    return false;
-  }
-}
-
-// --- СТАТИКА ---
 
 const userState = {};
 
@@ -266,7 +237,6 @@ function resetState(state) {
   state.name = null;
   state.waitingCsvPeriod = false;
 }
-
 // --- START ---
 
 bot.start((ctx) => {
@@ -291,13 +261,15 @@ bot.start((ctx) => {
     mainMenu()
   );
 });
-
 // --- ОСНОВНАЯ ЛОГИКА ---
 
 bot.on("text", async (ctx) => {
   const chatId = ctx.chat.id;
   const raw = ctx.message.text.trim();
   const from = ctx.from;
+
+  // запуск таймера неактивности на 60 секунд
+  startInactivityTimer(ctx, from.id, chatId);
 
   if (!userState[chatId]) userState[chatId] = createState();
   const state = userState[chatId];
@@ -379,7 +351,37 @@ bot.on("text", async (ctx) => {
       return ctx.reply("Выберите период с кнопок.");
     }
 
-    const { from: fromDate, to: toDate } = getPeriodRange(raw);
+    const now = new Date();
+    function formatDate(d) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    let fromDate;
+    let toDate;
+
+    if (raw === "Сегодня") {
+      fromDate = formatDate(now);
+      toDate = formatDate(now);
+    } else if (raw === "Вчера") {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 1);
+      fromDate = formatDate(d);
+      toDate = formatDate(d);
+    } else if (raw === "Последние 7 дней") {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 6);
+      fromDate = formatDate(d);
+      toDate = formatDate(now);
+    } else if (raw === "Последние 30 дней") {
+      const d = new Date(now);
+      d.setDate(d.getDate() - 29);
+      fromDate = formatDate(d);
+      toDate = formatDate(now);
+    }
+
     if (!fromDate || !toDate) {
       state.waitingCsvPeriod = false;
       return ctx.reply("Не удалось определить период.");
@@ -393,7 +395,6 @@ bot.on("text", async (ctx) => {
       return t >= fromTs && t <= toTs;
     });
 
-    // --- CSV #1: all.csv ---
     const headerAll = [
       "tg_id","username","first_name","last_name","chat_id",
       "status","phone","name","context","createdAt","updatedAt"
@@ -415,7 +416,6 @@ bot.on("text", async (ctx) => {
       { source: Buffer.from(csvAllWithBom, "utf-8"), filename: `all_${fromDate}_${toDate}.csv` }
     );
 
-    // --- CSV #2: leads.csv ---
     const leadsOnly = rows.filter(v => v.status === "lead");
 
     const headerLeads = ["name","phone","context","createdAt"];
@@ -564,39 +564,6 @@ bot.on("text", async (ctx) => {
       ])
     );
 
-    // автоприглашение через 30 минут
-    setTimeout(async () => {
-      try {
-        if (!isRealUser(from)) return;
-        if (hasBeenInvited(from.id)) return;
-        if (!isWorkingHours()) return;
-
-        const inChannel = await isUserInChannel(ctx, from.id);
-        if (inChannel) return;
-
-        await ctx.telegram.sendMessage(
-          chatId,
-          "Будем рады видеть вас в нашем Telegram‑канале 😊",
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  {
-                    text: "Наш Telegram - канал. Здесь выгодно!",
-                    url: "https://t.me/medgarantspb?utm_source=bot&utm_medium=autoinvite&utm_campaign=30min"
-                  }
-                ]
-              ]
-            }
-          }
-        );
-
-        logInvite(from.id);
-      } catch (e) {
-        console.error("Ошибка автоприглашения:", e.message);
-      }
-    }, 30 * 60 * 1000);
-
     return;
   }
 
@@ -634,7 +601,6 @@ bot.on("text", async (ctx) => {
   state.waitingForPhone = true;
   return ctx.reply("Чтобы записать вас на приём, напишите, пожалуйста, номер телефона для связи.");
 });
-
 // --- ЗАПУСК БОТА ---
 
 bot.launch();
