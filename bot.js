@@ -162,7 +162,7 @@ const branches = {
 
 function mainMenu() {
   return Markup.keyboard([
-    ["Зуб", "Десна"],
+    ["Зуб", "Имплантация"],
     ["Брекеты", "Гигиена"],
     ["Хочу консультацию"],
     ["График работы"]
@@ -583,3 +583,4 @@ bot.launch();
 
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));
+
